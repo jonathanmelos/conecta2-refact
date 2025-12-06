@@ -8,17 +8,21 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Client extends Model
 {
-    protected $fillable = [
+        protected $fillable = [
         'document_number',
         'first_name',
         'last_name',
         'email',
         'phone',
         'address',
-        'ruc',
+        'city',
+        'country',
+        'birth_date',
         'client_status',
         'subscription_status',
         'current_subscription_id',
+        'invited_by_client_id', // ✅ Agregar esta línea
+        'notes',
     ];
 
     protected $casts = [
@@ -31,6 +35,7 @@ class Client extends Model
     {
         return $this->belongsTo(Subscription::class, 'current_subscription_id');
     }
+    
 
     public function subscriptions(): HasMany
     {
@@ -72,6 +77,18 @@ class Client extends Model
         return $this->hasMany(Payment::class);
     }
 
+    // Relación con el cliente que lo invitó (master)
+    public function invitedBy()
+    {
+        return $this->belongsTo(Client::class, 'invited_by_client_id');
+    }
+
+    // Relación con los clientes que ha invitado
+    public function guests()
+    {
+        return $this->hasMany(Client::class, 'invited_by_client_id');
+    }
+
     // Accessors
     public function getFullNameAttribute(): string
     {
@@ -98,4 +115,5 @@ class Client extends Model
     {
         return $query->where('subscription_status', 'active');
     }
+    
 }
