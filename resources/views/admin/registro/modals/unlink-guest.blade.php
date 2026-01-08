@@ -4,15 +4,11 @@
         <div class="modal-content">
             <div class="modal-header bg-danger text-white">
                 <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> Confirmar Desvinculación</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <form method="POST" action="{{ route('admin.clientes.unlinkGuest') }}">
+            <form id="unlinkGuestForm" method="POST">
                 @csrf
                 <div class="modal-body">
-                    <input type="hidden" id="unlink_guest_id" name="guest_id">
-                    
                     <div class="alert alert-warning">
                         <strong><i class="bi bi-info-circle"></i> ¿Estás seguro?</strong>
                         <p class="mb-0 mt-2">Vas a desvincular a:</p>

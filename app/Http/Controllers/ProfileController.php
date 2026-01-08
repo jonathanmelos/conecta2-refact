@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Redirect;
 use Illuminate\View\View;
+use Illuminate\Support\Str;
 
 class ProfileController extends Controller
 {
@@ -56,5 +57,24 @@ class ProfileController extends Controller
         $request->session()->regenerateToken();
 
         return Redirect::to('/');
+    }
+
+    public function generateApiToken(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+        $plainToken = Str::random(64);
+        $user->api_token_hash = hash('sha256', $plainToken);
+        $user->save();
+
+        return Redirect::route('profile.edit')->with('api_token_plain', $plainToken);
+    }
+
+    public function revokeApiToken(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+        $user->api_token_hash = null;
+        $user->save();
+
+        return Redirect::route('profile.edit')->with('api_token_revoked', true);
     }
 }

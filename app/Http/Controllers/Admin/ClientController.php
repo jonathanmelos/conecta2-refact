@@ -4,62 +4,248 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Client;
+use App\Models\Subscription;
 use App\Models\Plan;
+use App\Models\UsageRecord;
+use App\Models\HoursTracking;
+use App\Exports\DetalleRegistroExport;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Maatwebsite\Excel\Facades\Excel;
+use Carbon\Carbon;
 
 class ClientController extends Controller
 {
-    public function index()
+    /**
+     * Listado de clientes activos
+     * Ordenados: 1) Plan vigente, 2) Plan no vigente, 3) Sin plan
+     * Con búsqueda por texto
+     */
+    public function index(Request $request)
     {
-        $clients = Client::with('currentSubscription.plan')
-            ->where('client_status', 'active')
-            ->orderBy('first_name')
+        $today = now()->toDateString();
+
+        // Subconsulta para determinar si tiene plan vigente
+        $query = Client::with('currentSubscription.plan')
+            ->leftJoin('subscriptions', function($join) use ($today) {
+                $join->on('clients.current_subscription_id', '=', 'subscriptions.id')
+                     ->where('subscriptions.status', '=', 'active')
+                     ->whereDate('subscriptions.start_date', '<=', $today)
+                     ->whereDate('subscriptions.end_date', '>=', $today);
+            })
+            ->select('clients.*')
+            ->selectRaw("CASE
+                WHEN subscriptions.id IS NOT NULL THEN 0
+                WHEN clients.subscription_status = 'active' THEN 1
+                ELSE 2
+            END as orden_plan")
+            ->where('clients.client_status', 'active');
+
+        // Búsqueda por texto (documento, nombre, apellido)
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('clients.document_number', 'like', "%{$search}%")
+                  ->orWhere('clients.first_name', 'like', "%{$search}%")
+                  ->orWhere('clients.last_name', 'like', "%{$search}%");
+            });
+        }
+
+        $clients = $query
+            ->orderBy('orden_plan')
+            ->orderBy('clients.first_name')
             ->paginate(50);
 
         return view('admin.clientes.index', compact('clients'));
     }
 
+    /**
+     * Formulario de creación de cliente
+     */
     public function create()
     {
-        return view('admin.clientes.create');
+        $plans = Plan::active()->orderBy('name')->get();
+        $clientesConPlan = Client::active()
+            ->withActiveSubscription()
+            ->with('currentSubscription.plan')
+            ->orderBy('first_name')
+            ->get();
+
+        return view('admin.clientes.create', compact('plans', 'clientesConPlan'));
     }
 
+    /**
+     * Almacenar nuevo cliente
+     */
     public function store(Request $request)
     {
         $validated = $request->validate([
             'document_number' => 'required|unique:clients,document_number',
             'first_name' => 'required|string|max:100',
-            'last_name' => 'required|string|max:100',
+            'last_name' => 'nullable|string|max:100',
             'email' => 'nullable|email',
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string',
-            'ruc' => 'nullable|string|max:20',
+            'tipo_cliente' => 'required|in:con_plan,invitado',
+            // Campos para cliente con plan
+            'plan_id' => 'required_if:tipo_cliente,con_plan|nullable|exists:plans,id',
+            'start_date' => 'required_if:tipo_cliente,con_plan|nullable|date',
+            // Campos para cliente invitado
+            'service_type' => 'required_if:tipo_cliente,invitado|nullable|in:cowork,meeting_room',
+            'master_client_id' => 'nullable|exists:clients,id',
         ]);
 
-        $validated['client_status'] = 'active';
-        $validated['subscription_status'] = 'expired';
+        DB::beginTransaction();
+        try {
+            // Crear el cliente
+            $client = Client::create([
+                'document_number' => $validated['document_number'],
+                'first_name' => $validated['first_name'],
+                'last_name' => $validated['last_name'] ?? '',
+                'email' => $validated['email'] ?? null,
+                'phone' => $validated['phone'] ?? null,
+                'address' => $validated['address'] ?? null,
+                'client_status' => 'active',
+                'subscription_status' => 'expired',
+            ]);
 
-        Client::create($validated);
+            if ($validated['tipo_cliente'] === 'con_plan') {
+                // Cliente con plan propio
+                $plan = Plan::findOrFail($validated['plan_id']);
+                $startDate = Carbon::parse($validated['start_date']);
+                $endDate = $startDate->copy()->addMonth();
 
-        return redirect()->route('admin.clientes.index')
-            ->with('success', 'Cliente creado exitosamente.');
+                // Crear suscripción
+                $subscription = Subscription::create([
+                    'client_id' => $client->id,
+                    'plan_id' => $plan->id,
+                    'start_date' => $startDate,
+                    'end_date' => $endDate,
+                    'status' => 'active',
+                    'monthly_price' => $plan->price,
+                    'billing_cycle' => 'monthly',
+                    'next_billing_date' => $endDate,
+                    'auto_renew' => false,
+                ]);
+
+                // Actualizar cliente con la suscripción
+                $client->update([
+                    'subscription_status' => 'active',
+                    'current_subscription_id' => $subscription->id,
+                ]);
+
+                // Crear registros de horas
+                if ($plan->cowork_hours > 0) {
+                    HoursTracking::create([
+                        'client_id' => $client->id,
+                        'subscription_id' => $subscription->id,
+                        'service_type' => 'cowork',
+                        'hours_used' => 0,
+                        'total_hours_available' => $plan->cowork_hours,
+                        'last_updated' => now(),
+                    ]);
+                }
+
+                if ($plan->meeting_room_hours > 0) {
+                    HoursTracking::create([
+                        'client_id' => $client->id,
+                        'subscription_id' => $subscription->id,
+                        'service_type' => 'meeting_room',
+                        'hours_used' => 0,
+                        'total_hours_available' => $plan->meeting_room_hours,
+                        'last_updated' => now(),
+                    ]);
+                }
+
+                DB::commit();
+                return redirect()->route('admin.clientes.index')
+                    ->with('success', 'Cliente ' . $client->full_name . ' creado exitosamente con plan ' . $plan->name)
+                    ->with('success_client_name', $client->full_name)
+                    ->with('success_client_doc', $client->document_number);
+
+            } else {
+                // Cliente invitado (por horas)
+                $masterClientId = $validated['master_client_id'] ?? null;
+
+                if ($masterClientId) {
+                    $master = Client::with('currentSubscription.plan')->findOrFail($masterClientId);
+
+                    if (!$master->currentSubscription || !$master->currentSubscription->plan) {
+                        throw new \Exception('El cliente anfitri?n no tiene un plan activo.');
+                    }
+
+                    // Vincular como invitado
+                    $client->update([
+                        'invited_by_client_id' => $master->id,
+                        'current_subscription_id' => $master->current_subscription_id,
+                        'subscription_status' => 'active',
+                    ]);
+
+                    // Crear registro de uso inicial
+                    UsageRecord::create([
+                        'client_id' => $client->id,
+                        'subscription_id' => $master->current_subscription_id,
+                        'service_type' => $validated['service_type'],
+                        'check_in' => now(),
+                        'status' => 'in_progress',
+                        'is_billable' => false,
+                        'registration_method' => 'manual',
+                        'quantity' => 0,
+                    ]);
+
+                    DB::commit();
+                    return redirect()->route('admin.registro.index', ['doc' => $client->document_number])
+                        ->with('success', 'Cliente ' . $client->full_name . ' invitado creado y vinculado a ' . $master->full_name)
+                        ->with('success_client_name', $client->full_name)
+                        ->with('success_client_doc', $client->document_number);
+                }
+
+                UsageRecord::create([
+                    'client_id' => $client->id,
+                    'subscription_id' => null,
+                    'service_type' => $validated['service_type'],
+                    'check_in' => now(),
+                    'status' => 'in_progress',
+                    'is_billable' => true,
+                    'registration_method' => 'manual',
+                    'quantity' => 0,
+                ]);
+
+                DB::commit();
+                return redirect()->route('admin.registro.index', ['doc' => $client->document_number])
+                    ->with('success', 'Cliente ' . $client->full_name . ' por horas creado sin plan asociado.')
+                    ->with('success_client_name', $client->full_name)
+                    ->with('success_client_doc', $client->document_number);
+            }
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()
+                ->withInput()
+                ->with('error', 'Error al crear cliente: ' . $e->getMessage());
+        }
     }
 
+    /**
+     * Formulario de edición de cliente
+     */
     public function edit(Client $client)
     {
         return view('admin.clientes.edit', compact('client'));
     }
 
+    /**
+     * Actualizar cliente
+     */
     public function update(Request $request, Client $client)
     {
         $validated = $request->validate([
-            'document_number' => 'required|unique:clients,document_number,' . $client->id,
             'first_name' => 'required|string|max:100',
-            'last_name' => 'required|string|max:100',
+            'last_name' => 'nullable|string|max:100',
             'email' => 'nullable|email',
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string',
-            'ruc' => 'nullable|string|max:20',
         ]);
 
         $client->update($validated);
@@ -68,26 +254,353 @@ class ClientController extends Controller
             ->with('success', 'Cliente actualizado exitosamente.');
     }
 
+    /**
+     * Eliminar cliente (soft delete)
+     */
     public function destroy(Client $client)
     {
-        // Soft delete - cambiar estado a 'deleted'
         $client->update(['client_status' => 'deleted']);
 
         return redirect()->route('admin.clientes.index')
             ->with('success', 'Cliente eliminado exitosamente.');
     }
 
+    /**
+     * Ver/Gestionar plan del cliente
+     */
     public function plan(Client $client)
     {
-        $client->load('subscriptions.plan', 'hoursTracking');
+        $client->load([
+            'subscriptions.plan',
+            'hoursTracking',
+            'invitedBy.currentSubscription.plan',
+            'guests'
+        ]);
+
         $plans = Plan::active()->get();
 
-        return view('admin.clientes.plan', compact('client', 'plans'));
+        // Obtener plan vigente (fecha actual entre start_date y end_date)
+        $planVigente = $client->subscriptions()
+            ->where('status', 'active')
+            ->whereDate('start_date', '<=', now())
+            ->whereDate('end_date', '>=', now())
+            ->with('plan')
+            ->first();
+
+        // Obtener plan futuro (start_date > fecha actual)
+        $planFuturo = $client->subscriptions()
+            ->where('status', 'active')
+            ->whereDate('start_date', '>', now())
+            ->with('plan')
+            ->first();
+
+        // Historial de planes (ordenado por fecha)
+        $historialPlanes = $client->subscriptions()
+            ->with('plan')
+            ->orderBy('start_date', 'desc')
+            ->get();
+
+        // Calcular consumo si hay plan vigente
+        $consumo = null;
+        if ($planVigente) {
+            $hoursCowork = HoursTracking::where('subscription_id', $planVigente->id)
+                ->where('service_type', 'cowork')
+                ->first();
+
+            $hoursSala = HoursTracking::where('subscription_id', $planVigente->id)
+                ->where('service_type', 'meeting_room')
+                ->first();
+
+            // Calcular impresiones usadas
+            $impresionesUsadas = UsageRecord::where('subscription_id', $planVigente->id)
+                ->where('service_type', 'print')
+                ->sum('quantity');
+
+            $consumo = [
+                'cowork' => [
+                    'contratadas' => $planVigente->plan->cowork_hours,
+                    'usadas' => $hoursCowork ? $hoursCowork->hours_used : 0,
+                    'restantes' => $planVigente->plan->cowork_hours - ($hoursCowork ? $hoursCowork->hours_used : 0),
+                ],
+                'sala' => [
+                    'contratadas' => $planVigente->plan->meeting_room_hours,
+                    'usadas' => $hoursSala ? $hoursSala->hours_used : 0,
+                    'restantes' => $planVigente->plan->meeting_room_hours - ($hoursSala ? $hoursSala->hours_used : 0),
+                ],
+                'impresiones' => [
+                    'contratadas' => $planVigente->plan->prints_included,
+                    'usadas' => $impresionesUsadas,
+                    'restantes' => $planVigente->plan->prints_included - $impresionesUsadas,
+                ],
+                'eventos' => $planVigente->plan->events_included,
+            ];
+        }
+
+        return view('admin.clientes.plan', compact(
+            'client',
+            'plans',
+            'planVigente',
+            'planFuturo',
+            'historialPlanes',
+            'consumo'
+        ));
     }
 
+    /**
+     * Formulario para suscribir cliente a un plan
+     */
+    public function suscribirForm(Client $client)
+    {
+        $plans = Plan::active()->orderBy('name')->get();
+        return view('admin.clientes.suscribir', compact('client', 'plans'));
+    }
+
+    /**
+     * Suscribir cliente a un plan
+     */
+    public function suscribir(Request $request, Client $client)
+    {
+        $validated = $request->validate([
+            'plan_id' => 'required|exists:plans,id',
+            'start_date' => 'required|date',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $plan = Plan::findOrFail($validated['plan_id']);
+            $startDate = Carbon::parse($validated['start_date']);
+            $endDate = $startDate->copy()->addMonth();
+
+            // Crear suscripción
+            $subscription = Subscription::create([
+                'client_id' => $client->id,
+                'plan_id' => $plan->id,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'status' => 'active',
+                'monthly_price' => $plan->price,
+                'billing_cycle' => 'monthly',
+                'next_billing_date' => $endDate,
+                'auto_renew' => false,
+            ]);
+
+            // Si la fecha de inicio es hoy o pasada, activar suscripción actual
+            if ($startDate->lte(now())) {
+                $client->update([
+                    'subscription_status' => 'active',
+                    'current_subscription_id' => $subscription->id,
+                ]);
+            }
+
+            // Crear registros de horas
+            if ($plan->cowork_hours > 0) {
+                HoursTracking::create([
+                    'client_id' => $client->id,
+                    'subscription_id' => $subscription->id,
+                    'service_type' => 'cowork',
+                    'hours_used' => 0,
+                    'total_hours_available' => $plan->cowork_hours,
+                    'last_updated' => now(),
+                ]);
+            }
+
+            if ($plan->meeting_room_hours > 0) {
+                HoursTracking::create([
+                    'client_id' => $client->id,
+                    'subscription_id' => $subscription->id,
+                    'service_type' => 'meeting_room',
+                    'hours_used' => 0,
+                    'total_hours_available' => $plan->meeting_room_hours,
+                    'last_updated' => now(),
+                ]);
+            }
+
+            DB::commit();
+            return redirect()->route('admin.clientes.plan', $client)
+                ->with('success', 'Cliente suscrito exitosamente al plan ' . $plan->name);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()
+                ->with('error', 'Error al suscribir: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Renovar plan (extiende el plan actual)
+     */
+    public function renovar(Request $request, Client $client)
+    {
+        $validated = $request->validate([
+            'plan_id' => 'required|exists:plans,id',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $plan = Plan::findOrFail($validated['plan_id']);
+
+            // Buscar suscripción actual
+            $currentSub = $client->currentSubscription;
+
+            // Fecha de inicio es el día después del fin del plan actual
+            $startDate = $currentSub ? $currentSub->end_date->copy()->addDay() : now();
+            $endDate = $startDate->copy()->addMonth();
+
+            // Crear nueva suscripción
+            $subscription = Subscription::create([
+                'client_id' => $client->id,
+                'plan_id' => $plan->id,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'status' => 'active',
+                'monthly_price' => $plan->price,
+                'billing_cycle' => 'monthly',
+                'next_billing_date' => $endDate,
+                'auto_renew' => false,
+            ]);
+
+            // Crear registros de horas para la nueva suscripción
+            if ($plan->cowork_hours > 0) {
+                HoursTracking::create([
+                    'client_id' => $client->id,
+                    'subscription_id' => $subscription->id,
+                    'service_type' => 'cowork',
+                    'hours_used' => 0,
+                    'total_hours_available' => $plan->cowork_hours,
+                    'last_updated' => now(),
+                ]);
+            }
+
+            if ($plan->meeting_room_hours > 0) {
+                HoursTracking::create([
+                    'client_id' => $client->id,
+                    'subscription_id' => $subscription->id,
+                    'service_type' => 'meeting_room',
+                    'hours_used' => 0,
+                    'total_hours_available' => $plan->meeting_room_hours,
+                    'last_updated' => now(),
+                ]);
+            }
+
+            DB::commit();
+            return redirect()->route('admin.clientes.plan', $client)
+                ->with('success', 'Plan renovado exitosamente. Nueva fecha de fin: ' . $endDate->format('d/m/Y'));
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()
+                ->with('error', 'Error al renovar: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Modificar plan actual
+     */
+    public function modificarPlan(Request $request, Client $client)
+    {
+        $validated = $request->validate([
+            'subscription_id' => 'required|exists:subscriptions,id',
+            'plan_id' => 'required|exists:plans,id',
+            'start_date' => 'required|date',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $subscription = Subscription::findOrFail($validated['subscription_id']);
+            $newPlan = Plan::findOrFail($validated['plan_id']);
+            $startDate = Carbon::parse($validated['start_date']);
+            $endDate = $startDate->copy()->addMonth();
+
+            // Actualizar suscripción
+            $subscription->update([
+                'plan_id' => $newPlan->id,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'monthly_price' => $newPlan->price,
+                'next_billing_date' => $endDate,
+            ]);
+
+            // Actualizar o crear registros de horas
+            HoursTracking::updateOrCreate(
+                [
+                    'subscription_id' => $subscription->id,
+                    'service_type' => 'cowork',
+                ],
+                [
+                    'client_id' => $client->id,
+                    'total_hours_available' => $newPlan->cowork_hours,
+                    'last_updated' => now(),
+                ]
+            );
+
+            HoursTracking::updateOrCreate(
+                [
+                    'subscription_id' => $subscription->id,
+                    'service_type' => 'meeting_room',
+                ],
+                [
+                    'client_id' => $client->id,
+                    'total_hours_available' => $newPlan->meeting_room_hours,
+                    'last_updated' => now(),
+                ]
+            );
+
+            DB::commit();
+            return redirect()->route('admin.clientes.plan', $client)
+                ->with('success', 'Plan modificado exitosamente a ' . $newPlan->name);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()
+                ->with('error', 'Error al modificar: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Iniciar plan futuro
+     */
+    public function iniciarPlan(Request $request, Client $client)
+    {
+        $validated = $request->validate([
+            'subscription_id' => 'required|exists:subscriptions,id',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $subscription = Subscription::findOrFail($validated['subscription_id']);
+
+            // Actualizar fecha de inicio a hoy
+            $startDate = now();
+            $endDate = $startDate->copy()->addMonth();
+
+            $subscription->update([
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'next_billing_date' => $endDate,
+            ]);
+
+            // Actualizar cliente
+            $client->update([
+                'subscription_status' => 'active',
+                'current_subscription_id' => $subscription->id,
+            ]);
+
+            DB::commit();
+            return redirect()->route('admin.clientes.plan', $client)
+                ->with('success', 'Plan iniciado exitosamente.');
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()
+                ->with('error', 'Error al iniciar plan: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Vista limitada para usuarios regulares
+     */
     public function indexRegular()
     {
-        // Vista limitada para usuarios regulares
         $clients = Client::with('currentSubscription.plan')
             ->where('client_status', 'active')
             ->orderBy('first_name')
@@ -95,98 +608,346 @@ class ClientController extends Controller
 
         return view('regular.clientes.index', compact('clients'));
     }
-/**
- * Crear cliente rápido (sin plan, para invitados/ocasionales)
- */
-public function storeQuick(Request $request)
-{
-    $request->validate([
-        'document_number' => 'required|string|max:20|unique:clients,document_number',
-        'first_name' => 'required|string|max:100',
-        'last_name' => 'required|string|max:100',
-        'phone' => 'nullable|string|max:20',
-        'email' => 'nullable|email|max:100',
-    ]);
-    
-    $client = Client::create([
-        'document_number' => $request->document_number,
-        'first_name' => $request->first_name,
-        'last_name' => $request->last_name,
-        'phone' => $request->phone,
-        'email' => $request->email,
-        'client_status' => 'active',
-        'subscription_status' => 'expired', // Sin plan activo = Cliente ocasional
-    ]);
-    
-    return redirect()->route('admin.registro.index', ['doc' => $client->document_number])
-        ->with('success', '✓ Cliente ocasional ' . $client->full_name . ' creado exitosamente. Puede registrar uso de servicios.');
-}
 
-/**
- * Vincular un cliente como invitado de otro (master)
- */
-public function linkGuest(Request $request)
-{
-    $request->validate([
-        'guest_id' => 'required|exists:clients,id',
-        'master_id' => 'required|exists:clients,id',
-    ]);
-    
-    $guest = Client::findOrFail($request->guest_id);
-    $master = Client::with('currentSubscription.plan')->findOrFail($request->master_id);
-    
-    // Validar que el master tenga plan activo
-    if (!$master->currentSubscription || !$master->currentSubscription->plan) {
-        return redirect()->route('admin.registro.index')
-            ->with('error', 'El cliente master debe tener un plan activo para poder invitar.');
+    /**
+     * Crear cliente rápido (sin plan, para invitados/ocasionales)
+     */
+    public function storeQuick(Request $request)
+    {
+        $request->validate([
+            'document_number' => 'required|string|max:20|unique:clients,document_number',
+            'first_name' => 'required|string|max:100',
+            'last_name' => 'required|string|max:100',
+            'phone' => 'nullable|string|max:20',
+            'email' => 'nullable|email|max:100',
+        ]);
+
+        $client = Client::create([
+            'document_number' => $request->document_number,
+            'first_name' => $request->first_name,
+            'last_name' => $request->last_name,
+            'phone' => $request->phone,
+            'email' => $request->email,
+            'client_status' => 'active',
+            'subscription_status' => 'expired',
+        ]);
+
+        return redirect()->route('admin.registro.index', [
+            'doc' => $client->document_number,
+            'open_service' => 1,
+        ])
+            ->with('success', 'Cliente ocasional ' . $client->full_name . ' creado exitosamente.');
     }
-    
-    // Validar que no se inviten a sí mismos
-    if ($guest->id === $master->id) {
-        return redirect()->route('admin.registro.index')
-            ->with('error', 'Un cliente no puede ser invitado de sí mismo.');
-    }
-    
-    // Vincular el invitado
-    $guest->update([
-        'invited_by_client_id' => $master->id,
-        // El invitado hereda la suscripción del master
-        'current_subscription_id' => $master->current_subscription_id,
-        'subscription_status' => 'active',
-    ]);
-    
-    return redirect()->route('admin.registro.index', ['doc' => $guest->document_number])
-        ->with('success', '✓ ' . $guest->full_name . ' ha sido vinculado como invitado de ' . $master->full_name);
-}
-/**
- * Desvincular un cliente invitado de su master
- */
-public function unlinkGuest(Request $request)
-{
-    $request->validate([
-        'guest_id' => 'required|exists:clients,id',
-    ]);
-    
-    $guest = Client::findOrFail($request->guest_id);
-    
-    // Verificar que el cliente esté vinculado a alguien
-    if (!$guest->invited_by_client_id) {
+
+    /**
+     * Vincular un cliente como invitado de otro (master)
+     */
+    public function linkGuest(Request $request)
+    {
+        $request->validate([
+            'guest_id' => 'required|exists:clients,id',
+            'master_id' => 'required|exists:clients,id',
+        ]);
+
+        $guest = Client::findOrFail($request->guest_id);
+        $master = Client::with('currentSubscription.plan')->findOrFail($request->master_id);
+
+        // Verificar que el master tenga un plan activo
+        if (!$master->currentSubscription || !$master->currentSubscription->plan) {
+            return redirect()->back()
+                ->with('error', $master->full_name . ' no tiene un plan activo.');
+        }
+
+        // Validar: Si el invitado tiene servicio activo, verificar que el plan del master lo incluya
+        $servicioActivo = UsageRecord::where('client_id', $guest->id)
+            ->where('status', 'in_progress')
+            ->whereDate('check_in', today())
+            ->first();
+
+        if ($servicioActivo) {
+            $plan = $master->currentSubscription->plan;
+
+            if ($servicioActivo->service_type === 'cowork' && $plan->cowork_hours <= 0) {
+                return redirect()->back()
+                    ->with('error', 'No se puede vincular: ' . $guest->full_name . ' está usando cowork pero el plan "' . $plan->name . '" NO incluye horas de cowork.');
+            }
+
+            if ($servicioActivo->service_type === 'meeting_room' && $plan->meeting_room_hours <= 0) {
+                return redirect()->back()
+                    ->with('error', 'No se puede vincular: ' . $guest->full_name . ' está usando sala de reuniones pero el plan "' . $plan->name . '" NO incluye horas de sala.');
+            }
+
+            // Actualizar hours_tracking: Transferir horas al master
+            $duracionActual = now()->diffInMinutes($servicioActivo->check_in) / 60;
+
+            $tracking = HoursTracking::firstOrCreate(
+                [
+                    'client_id' => $master->id,
+                    'subscription_id' => $master->current_subscription_id,
+                    'service_type' => $servicioActivo->service_type,
+                ],
+                [
+                    'hours_used' => 0,
+                    'total_hours_available' => $servicioActivo->service_type === 'cowork'
+                        ? $plan->cowork_hours
+                        : $plan->meeting_room_hours,
+                ]
+            );
+
+            $tracking->increment('hours_used', $duracionActual);
+            $tracking->update(['last_updated' => now()]);
+
+            $servicioActivo->update([
+                'subscription_id' => $master->current_subscription_id,
+                'is_billable' => false,
+            ]);
+        }
+
+        // Vincular el invitado al master
+        $guest->update([
+            'invited_by_client_id' => $master->id,
+            'current_subscription_id' => $master->current_subscription_id,
+            'subscription_status' => 'active',
+        ]);
+
         return redirect()->back()
-            ->with('error', $guest->full_name . ' no está vinculado a ningún cliente.');
+            ->with('success', $guest->full_name . ' ha sido vinculado como invitado de ' . $master->full_name);
     }
-    
-    // Guardar el nombre del master para el mensaje
-    $master = Client::find($guest->invited_by_client_id);
-    $masterName = $master ? $master->full_name : 'cliente master';
-    
-    // Desvincular
-    $guest->update([
-        'invited_by_client_id' => null,
-        'current_subscription_id' => null,
-        'subscription_status' => 'expired',
-    ]);
-    
-    return redirect()->back()
-        ->with('success', $guest->full_name . ' fue desvinculado de ' . $masterName);
-}
+
+    /**
+     * Desvincular un cliente invitado
+     */
+    public function unlinkGuest(Request $request, $id)
+    {
+        try {
+            $guest = Client::with('currentSubscription.plan')->findOrFail($id);
+
+            if (!$guest->invited_by_client_id) {
+                return redirect()->back()->with('error', 'Este cliente no está vinculado a ningún plan.');
+            }
+
+            $master = Client::find($guest->invited_by_client_id);
+            $masterName = $master->full_name ?? 'desconocido';
+
+            $masterSubscriptionIds = Subscription::where('client_id', $master->id)
+                ->pluck('id')
+                ->toArray();
+
+            // Verificar si hay registros activos
+            $registrosActivos = UsageRecord::where('client_id', $guest->id)
+                ->whereIn('subscription_id', $masterSubscriptionIds)
+                ->where('status', 'in_progress')
+                ->get();
+
+            if ($registrosActivos->count() > 0) {
+                $tiposServicios = $registrosActivos->pluck('service_type')->unique()->map(function($type) {
+                    return $type === 'cowork' ? 'Cowork' : ($type === 'meeting_room' ? 'Sala de Reuniones' : 'Impresión');
+                })->join(', ');
+
+                return redirect()->back()->with('error',
+                    "No se puede desvincular porque {$guest->full_name} tiene registros activos sin cerrar ({$tiposServicios}). " .
+                    "Por favor, finaliza todos los registros abiertos antes de desvincular."
+                );
+            }
+
+            // Proceder con la desvinculación
+            $registrosCompletados = UsageRecord::where('client_id', $guest->id)
+                ->whereIn('subscription_id', $masterSubscriptionIds)
+                ->where('status', 'completed')
+                ->get();
+
+            if ($guest->currentSubscription && $guest->currentSubscription->status === 'active') {
+                $planPropio = $guest->currentSubscription;
+                $planDetails = $planPropio->plan;
+
+                foreach ($registrosCompletados as $registro) {
+                    $nuevoSubscriptionId = null;
+
+                    if ($registro->service_type === 'cowork' && $planDetails->cowork_hours > 0) {
+                        $nuevoSubscriptionId = $planPropio->id;
+                    } elseif ($registro->service_type === 'meeting_room' && $planDetails->meeting_room_hours > 0) {
+                        $nuevoSubscriptionId = $planPropio->id;
+                    } elseif ($registro->service_type === 'print') {
+                        $nuevoSubscriptionId = $planPropio->id;
+                    }
+
+                    $registro->subscription_id = $nuevoSubscriptionId;
+                    $registro->save();
+                }
+
+                $mensaje = "Cliente desvinculado exitosamente de {$masterName}. Los registros completados se reasignaron a su plan propio donde fue posible.";
+
+            } else {
+                UsageRecord::where('client_id', $guest->id)
+                    ->whereIn('subscription_id', $masterSubscriptionIds)
+                    ->where('status', 'completed')
+                    ->update(['subscription_id' => null]);
+
+                $mensaje = "Cliente desvinculado exitosamente de {$masterName}. Los registros completados quedaron como ocasionales.";
+            }
+
+            // Desvincular el cliente
+            $guest->invited_by_client_id = null;
+            $guest->current_subscription_id = null;
+            $guest->subscription_status = 'expired';
+            $guest->save();
+
+            return redirect()->back()->with('success', $mensaje);
+
+        } catch (\Exception $e) {
+            \Log::error('Error al desvincular cliente: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Error al desvincular: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Detalle de registro del cliente
+     * Muestra todos los registros de la suscripción (incluye invitados)
+     */
+    public function detalleRegistro(Client $client, Subscription $subscription)
+    {
+        // Cargar el plan de la suscripción
+        $subscription->load('plan');
+
+        $registros = UsageRecord::with('client')
+            ->where('subscription_id', $subscription->id)
+            ->orderBy('check_in', 'desc')
+            ->paginate(50);
+
+        // Obtener todos los registros para cálculos (sin paginación)
+        $todosRegistros = UsageRecord::where('subscription_id', $subscription->id)->get();
+
+        // Calcular horas usadas de cowork
+        $horasCoworkUsadas = 0;
+        foreach ($todosRegistros->where('service_type', 'cowork') as $reg) {
+            if ($reg->check_out) {
+                $horasCoworkUsadas += $reg->check_in->diffInMinutes($reg->check_out) / 60;
+            }
+        }
+
+        // Calcular horas usadas de sala
+        $horasSalaUsadas = 0;
+        foreach ($todosRegistros->where('service_type', 'meeting_room') as $reg) {
+            if ($reg->check_out) {
+                $horasSalaUsadas += $reg->check_in->diffInMinutes($reg->check_out) / 60;
+            }
+        }
+
+        // Calcular impresiones usadas (suma de quantity de TODOS los registros, no solo tipo 'print')
+        $impresionesUsadas = $todosRegistros->sum('quantity');
+
+        // Horas contratadas del plan
+        $horasCoworkContratadas = $subscription->plan->cowork_hours ?? 0;
+        $horasSalaContratadas = $subscription->plan->meeting_room_hours ?? 0;
+        $impresionesContratadas = $subscription->plan->prints_included ?? 0;
+
+        // Horas restantes
+        $horasCoworkRestantes = max(0, $horasCoworkContratadas - $horasCoworkUsadas);
+        $horasSalaRestantes = max(0, $horasSalaContratadas - $horasSalaUsadas);
+        $impresionesRestantes = max(0, $impresionesContratadas - $impresionesUsadas);
+
+        // Contadores
+        $contadorCowork = $todosRegistros->where('service_type', 'cowork')->count();
+        $contadorSala = $todosRegistros->where('service_type', 'meeting_room')->count();
+
+        return view('admin.clientes.detalle-registro', compact(
+            'client',
+            'subscription',
+            'registros',
+            'todosRegistros',
+            'horasCoworkUsadas',
+            'horasSalaUsadas',
+            'horasCoworkContratadas',
+            'horasSalaContratadas',
+            'horasCoworkRestantes',
+            'horasSalaRestantes',
+            'impresionesUsadas',
+            'impresionesContratadas',
+            'impresionesRestantes',
+            'contadorCowork',
+            'contadorSala'
+        ));
+    }
+
+    public function exportDetalleRegistroExcel(Client $client, Subscription $subscription)
+    {
+        if ($subscription->client_id !== $client->id) {
+            abort(404);
+        }
+
+        return Excel::download(
+            new DetalleRegistroExport($subscription),
+            'registro-' . $subscription->id . '.xlsx'
+        );
+    }
+
+    public function exportDetalleRegistroPdf(Client $client, Subscription $subscription)
+    {
+        if ($subscription->client_id !== $client->id) {
+            abort(404);
+        }
+
+        $subscription->load('plan');
+        $registros = UsageRecord::with('client')
+            ->where('subscription_id', $subscription->id)
+            ->orderBy('check_in', 'desc')
+            ->get();
+
+        $horasCoworkUsadas = 0;
+        foreach ($registros->where('service_type', 'cowork') as $reg) {
+            if ($reg->check_out) {
+                $horasCoworkUsadas += $reg->check_in->diffInMinutes($reg->check_out) / 60;
+            }
+        }
+
+        $horasSalaUsadas = 0;
+        foreach ($registros->where('service_type', 'meeting_room') as $reg) {
+            if ($reg->check_out) {
+                $horasSalaUsadas += $reg->check_in->diffInMinutes($reg->check_out) / 60;
+            }
+        }
+
+        $impresionesUsadas = $registros->sum('quantity');
+
+        $horasCoworkContratadas = $subscription->plan->cowork_hours ?? 0;
+        $horasSalaContratadas = $subscription->plan->meeting_room_hours ?? 0;
+        $impresionesContratadas = $subscription->plan->prints_included ?? 0;
+
+        $porcentajeCowork = $horasCoworkContratadas > 0
+            ? min(100, ($horasCoworkUsadas / $horasCoworkContratadas) * 100)
+            : 0;
+        $porcentajeSala = $horasSalaContratadas > 0
+            ? min(100, ($horasSalaUsadas / $horasSalaContratadas) * 100)
+            : 0;
+        $porcentajeImpresiones = $impresionesContratadas > 0
+            ? min(100, ($impresionesUsadas / $impresionesContratadas) * 100)
+            : 0;
+
+        $pdf = Pdf::loadView('admin.clientes.detalle-registro-pdf', [
+            'client' => $client,
+            'subscription' => $subscription,
+            'registros' => $registros,
+            'horasCoworkUsadas' => $horasCoworkUsadas,
+            'horasSalaUsadas' => $horasSalaUsadas,
+            'impresionesUsadas' => $impresionesUsadas,
+            'horasCoworkContratadas' => $horasCoworkContratadas,
+            'horasSalaContratadas' => $horasSalaContratadas,
+            'impresionesContratadas' => $impresionesContratadas,
+            'porcentajeCowork' => $porcentajeCowork,
+            'porcentajeSala' => $porcentajeSala,
+            'porcentajeImpresiones' => $porcentajeImpresiones,
+        ])->setPaper('a4', 'landscape');
+
+        return $pdf->download('registro-' . $subscription->id . '.pdf');
+    }
+
+    /**
+     * Eliminar un registro de uso
+     */
+    public function eliminarRegistro(UsageRecord $usageRecord)
+    {
+        $usageRecord->delete();
+
+        return redirect()->back()->with('success', 'Registro eliminado exitosamente.');
+    }
 }

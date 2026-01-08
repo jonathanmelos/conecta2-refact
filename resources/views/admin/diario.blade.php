@@ -1,9 +1,5 @@
 @extends('layouts.conecta')
 
-@php
-    $showAlert = $registrosPendientes->count() > 0 || $registrosNoConcluidos->count() > 0;
-@endphp
-
 @section('content')
 <div class="row">
     <div class="col-12">
@@ -55,7 +51,7 @@
 
         {{-- Estadísticas del día --}}
         <div class="row mb-4">
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <div class="card text-center">
                     <div class="card-body">
                         <h2 class="text-primary mb-0">{{ $stats['total_cowork'] }}</h2>
@@ -64,7 +60,7 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <div class="card text-center">
                     <div class="card-body">
                         <h2 class="text-info mb-0">{{ $stats['total_sala'] }}</h2>
@@ -91,6 +87,15 @@
                     </div>
                 </div>
             </div>
+            <div class="col-md-2">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h2 class="text-primary mb-0">{{ $stats['total_impresiones'] }}</h2>
+                        <p class="mb-0">Impresiones</p>
+                        <small class="text-muted">del día</small>
+                    </div>
+                </div>
+            </div>
         </div>
 
         {{-- Registros de Coworking --}}
@@ -108,8 +113,6 @@
                         <th>Entrada</th>
                         <th>Salida</th>
                         <th>Horas Usadas</th>
-                        <th>Impresiones</th>
-                        <th>Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -142,35 +145,10 @@
                                 <span class="text-muted">-</span>
                             @endif
                         </td>
-                        <td class="text-center">
-                            {{ $registro->quantity }}
-                        </td>
-                        <td>
-                            <div class="btn-group btn-group-sm" role="group">
-                                <button class="btn btn-warning" title="Modificar">
-                                    Modificar
-                                </button>
-                                <button class="btn btn-danger" title="Eliminar">
-                                    Eliminar
-                                </button>
-                                @if($registro->is_completed && !$registro->invoiced)
-                                    <form method="POST" action="#" style="display: inline;">
-                                        @csrf
-                                        <button type="submit" class="btn btn-success" title="Aprobar y contabilizar horas">
-                                            Aprobar
-                                        </button>
-                                    </form>
-                                @elseif($registro->invoiced)
-                                    <button class="btn btn-secondary" disabled title="Ya aprobado">
-                                        ✓ Aprobado
-                                    </button>
-                                @endif
-                            </div>
-                        </td>
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="8" class="text-center text-muted py-4">
+                        <td colspan="5" class="text-center text-muted py-4">
                             No hay registros de cowork para esta fecha
                         </td>
                     </tr>
@@ -194,8 +172,6 @@
                         <th>Entrada</th>
                         <th>Salida</th>
                         <th>Horas Usadas</th>
-                        <th>Impresiones</th>
-                        <th>Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -228,36 +204,63 @@
                                 <span class="text-muted">-</span>
                             @endif
                         </td>
-                        <td class="text-center">
-                            {{ $registro->quantity }}
+                    </tr>
+                    @empty
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-4">
+                            No hay registros de sala para esta fecha
                         </td>
+                    </tr>
+                    @endforelse
+                </tbody>
+            </table>
+        </div>
+
+        {{-- Tabla de Impresiones del Día --}}
+        <h4 class="mb-3">
+            <img src="{{ asset('images/impresion.png') }}" width="20" height="20" alt="Impresiones">
+            Impresiones del Día
+        </h4>
+        
+        <div class="table-responsive mb-5">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Nombre</th>
+                        <th>Teléfono</th>
+                        <th>Servicio</th>
+                        <th>Hora</th>
+                        <th class="text-center">Cantidad</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @forelse($registrosImpresiones as $item)
+                    <tr>
                         <td>
-                            <div class="btn-group btn-group-sm" role="group">
-                                <button class="btn btn-warning">
-                                    Modificar
-                                </button>
-                                <button class="btn btn-danger">
-                                    Eliminar
-                                </button>
-                                @if($registro->is_completed && !$registro->invoiced)
-                                    <form method="POST" action="#" style="display: inline;">
-                                        @csrf
-                                        <button type="submit" class="btn btn-success">
-                                            Aprobar
-                                        </button>
-                                    </form>
-                                @elseif($registro->invoiced)
-                                    <button class="btn btn-secondary" disabled>
-                                        ✓ Aprobado
-                                    </button>
-                                @endif
-                            </div>
+                            <strong>{{ $item['client']->full_name }}</strong>
+                            @if($item['client']->currentSubscription)
+                                <br><small class="text-muted">{{ $item['client']->currentSubscription->plan->name }}</small>
+                            @endif
+                        </td>
+                        <td>{{ $item['client']->phone }}</td>
+                        <td>
+                            @if($item['service_type'] === 'Cowork')
+                                <span class="badge bg-primary">Cowork</span>
+                            @elseif($item['service_type'] === 'Sala de Reuniones')
+                                <span class="badge bg-info">Sala de Reuniones</span>
+                            @else
+                                <span class="badge bg-secondary">Ocasional</span>
+                            @endif
+                        </td>
+                        <td>{{ $item['time']->format('H:i') }}</td>
+                        <td class="text-center">
+                            <strong class="text-primary">{{ $item['prints'] }}</strong>
                         </td>
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="8" class="text-center text-muted py-4">
-                            No hay registros de sala para esta fecha
+                        <td colspan="5" class="text-center text-muted py-4">
+                            No hay impresiones registradas para esta fecha
                         </td>
                     </tr>
                     @endforelse
@@ -266,67 +269,6 @@
         </div>
     </div>
 </div>
-@endsection
-
-@section('alert-content')
-{{-- Alerta lateral con registros pendientes --}}
-<h5 class="text-warning">⚠️ Registros Pendientes de Aprobación</h5>
-<p class="small">Estos registros necesitan ser aprobados para contabilizar las horas:</p>
-<table class="table table-sm">
-    <thead>
-        <tr>
-            <th>Cliente</th>
-            <th>Fecha</th>
-            <th>Horas</th>
-        </tr>
-    </thead>
-    <tbody>
-        @foreach($registrosPendientes->take(8) as $pendiente)
-        <tr>
-            <td>{{ $pendiente->client->full_name }}</td>
-            <td>{{ $pendiente->check_in->format('d/m') }}</td>
-            <td>{{ number_format($pendiente->duration_in_hours ?? 0, 1) }}h</td>
-        </tr>
-        @endforeach
-    </tbody>
-</table>
-
-@if($registrosPendientes->count() > 8)
-    <p class="small text-muted mb-0">... y {{ $registrosPendientes->count() - 8 }} más</p>
-@endif
-
-<hr>
-
-<h5 class="text-danger">🔴 Registros No Concluidos</h5>
-<p class="small">Clientes que no han registrado su salida:</p>
-<table class="table table-sm">
-    <thead>
-        <tr>
-            <th>Cliente</th>
-            <th>Servicio</th>
-            <th>Entrada</th>
-        </tr>
-    </thead>
-    <tbody>
-        @foreach($registrosNoConcluidos->take(8) as $noConcluido)
-        <tr>
-            <td>{{ $noConcluido->client->full_name }}</td>
-            <td>
-                @if($noConcluido->service_type === 'cowork')
-                    Cowork
-                @else
-                    Sala
-                @endif
-            </td>
-            <td>{{ $noConcluido->check_in->format('d/m H:i') }}</td>
-        </tr>
-        @endforeach
-    </tbody>
-</table>
-
-@if($registrosNoConcluidos->count() > 8)
-    <p class="small text-muted mb-0">... y {{ $registrosNoConcluidos->count() - 8 }} más</p>
-@endif
 @endsection
 
 @push('scripts')

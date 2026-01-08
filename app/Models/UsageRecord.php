@@ -114,4 +114,5 @@ class UsageRecord extends Model
         return $query->where('is_billable', true)
             ->where('invoiced', false);
     }
+
 }

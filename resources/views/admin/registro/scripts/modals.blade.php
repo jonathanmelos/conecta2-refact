@@ -87,25 +87,183 @@ function selectMaster(masterId, masterName, masterPlan) {
     document.getElementById('invite_master_search').value = '';
     document.getElementById('btnVincular').disabled = false;
 }
-// Confirmar desvinculación
-function confirmUnlink(guestId, guestName, masterId) {
-    document.getElementById('unlink_guest_id').value = guestId;
-    document.getElementById('unlink_guest_name').textContent = guestName;
-    
-    // Obtener el nombre del master desde el DOM
-    const masterNameElement = document.querySelector('.card-body h5');
-    if (masterNameElement) {
-        document.getElementById('unlink_master_name').textContent = masterNameElement.textContent;
-    }
-    
-    new bootstrap.Modal(document.getElementById('unlinkModal')).show();
-}
-// Confirmar desvinculación desde el panel del propio cliente
+
+// Funciones de desvinculación
 function confirmUnlinkSelf(guestId, guestName, masterName) {
-    document.getElementById('unlink_guest_id').value = guestId;
+    console.log('confirmUnlinkSelf llamado:', guestId, guestName, masterName);
+    
     document.getElementById('unlink_guest_name').textContent = guestName;
     document.getElementById('unlink_master_name').textContent = masterName;
     
-    new bootstrap.Modal(document.getElementById('unlinkModal')).show();
+    const form = document.getElementById('unlinkGuestForm');
+    form.action = `{{ url('admin/clientes/unlink-guest') }}/${guestId}`;
+    
+    const modal = new bootstrap.Modal(document.getElementById('unlinkModal'));
+    modal.show();
+}
+
+function confirmUnlink(guestId, guestName, masterId) {
+    console.log('confirmUnlink llamado:', guestId, guestName, masterId);
+    
+    const masterName = document.querySelector('#clientInfoCard h5')?.textContent || '{{ $selectedClient->full_name ?? "" }}';
+    
+    document.getElementById('unlink_guest_name').textContent = guestName;
+    document.getElementById('unlink_master_name').textContent = masterName;
+    
+    const form = document.getElementById('unlinkGuestForm');
+    form.action = `{{ url('admin/clientes/unlink-guest') }}/${guestId}`;
+    
+    const modal = new bootstrap.Modal(document.getElementById('unlinkModal'));
+    modal.show();
+}
+
+// ⭐ Abrir modal de edición de registro
+function openEditModal(recordId, serviceType, clientName, checkIn, checkOut, subscriptionId, planName) {
+    console.log('=== openEditModal LLAMADO ===');
+    console.log('Record ID:', recordId);
+    console.log('Service Type:', serviceType);
+    console.log('Check In:', checkIn);
+    console.log('Check Out:', checkOut);
+    console.log('Subscription ID:', subscriptionId);
+    console.log('Plan Name:', planName);
+    
+    document.getElementById('edit_record_id').value = recordId;
+    document.getElementById('edit_client_name').textContent = clientName;
+    
+    const serviceLabel = serviceType === 'cowork' ? 'Cowork' : (serviceType === 'meeting_room' ? 'Sala de Reuniones' : 'Impresión');
+    document.getElementById('edit_service_type').textContent = serviceLabel;
+    
+    // Fechas
+    document.getElementById('edit_check_in').value = checkIn;
+    document.getElementById('edit_check_out').value = checkOut || checkIn;
+    
+    // ⭐ Mostrar plan actual
+    const planInfo = document.getElementById('edit_current_plan_info');
+    if (subscriptionId && subscriptionId !== 'null' && subscriptionId !== null && planName) {
+        planInfo.innerHTML = `<span class="badge bg-primary">${planName}</span>`;
+    } else {
+        planInfo.innerHTML = `<span class="badge bg-warning text-dark">Sin plan (Ocasional)</span>`;
+    }
+    
+    // Resetear opciones
+    document.getElementById('plan_option_keep').checked = true;
+    document.getElementById('edit_master_search_container').classList.add('d-none');
+    document.getElementById('edit_new_subscription_id').value = '';
+    document.getElementById('edit_selected_master').classList.add('d-none');
+    document.getElementById('edit_master_search').value = '';
+    document.getElementById('edit_master_search_results').innerHTML = '';
+    
+    // Calcular duración
+    setupDurationCalculator();
+    
+    new bootstrap.Modal(document.getElementById('editRecordModal')).show();
+}
+
+// Calcular duración en tiempo real
+function setupDurationCalculator() {
+    const checkInInput = document.getElementById('edit_check_in');
+    const checkOutInput = document.getElementById('edit_check_out');
+    const durationPreview = document.getElementById('edit_duration_preview');
+    const durationText = document.getElementById('duration_text');
+    
+    function calculateDuration() {
+        const checkIn = new Date(checkInInput.value);
+        const checkOut = new Date(checkOutInput.value);
+        
+        if (checkIn && checkOut && checkOut > checkIn) {
+            const diffMs = checkOut - checkIn;
+            const diffHours = diffMs / (1000 * 60 * 60);
+            const hours = Math.floor(diffHours);
+            const minutes = Math.round((diffHours - hours) * 60);
+            
+            durationText.textContent = `${hours} horas y ${minutes} minutos (${diffHours.toFixed(2)} horas)`;
+            durationPreview.classList.remove('d-none');
+        } else {
+            durationPreview.classList.add('d-none');
+        }
+    }
+    
+    checkInInput.removeEventListener('change', calculateDuration);
+    checkOutInput.removeEventListener('change', calculateDuration);
+    
+    checkInInput.addEventListener('change', calculateDuration);
+    checkOutInput.addEventListener('change', calculateDuration);
+    
+    calculateDuration();
+}
+
+// ⭐ Gestión del selector de plan en edición
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('input[name="plan_option"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const searchContainer = document.getElementById('edit_master_search_container');
+            if (this.value === 'link') {
+                searchContainer.classList.remove('d-none');
+            } else {
+                searchContainer.classList.add('d-none');
+                document.getElementById('edit_new_subscription_id').value = '';
+                document.getElementById('edit_selected_master').classList.add('d-none');
+                document.getElementById('edit_master_search').value = '';
+                document.getElementById('edit_master_search_results').innerHTML = '';
+            }
+        });
+    });
+});
+
+// Búsqueda de cliente master para vincular
+let editMasterSearchTimeout;
+const editMasterSearchInput = document.getElementById('edit_master_search');
+if (editMasterSearchInput) {
+    editMasterSearchInput.addEventListener('input', function() {
+        clearTimeout(editMasterSearchTimeout);
+        
+        const search = this.value.trim();
+        
+        if (search.length < 2) {
+            document.getElementById('edit_master_search_results').innerHTML = '';
+            return;
+        }
+        
+        editMasterSearchTimeout = setTimeout(() => {
+            fetch('{{ route("admin.registro.buscar") }}?search=' + encodeURIComponent(search))
+                .then(response => response.json())
+                .then(clients => {
+                    let html = '';
+                    
+                    clients.forEach(client => {
+                        if (client.current_subscription && client.current_subscription.plan) {
+                            html += `
+                                <a href="#" class="list-group-item list-group-item-action" 
+                                   onclick="selectEditMaster(${client.current_subscription.id}, '${client.first_name} ${client.last_name}', '${client.current_subscription.plan.name}'); return false;">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>${client.first_name} ${client.last_name}</strong>
+                                            <br><small class="text-muted">${client.document_number}</small>
+                                        </div>
+                                        <span class="badge bg-success">${client.current_subscription.plan.name}</span>
+                                    </div>
+                                </a>
+                            `;
+                        }
+                    });
+                    
+                    if (html === '') {
+                        html = '<div class="list-group-item text-center text-muted">No se encontraron clientes con plan activo</div>';
+                    }
+                    
+                    document.getElementById('edit_master_search_results').innerHTML = html;
+                });
+        }, 300);
+    });
+}
+
+function selectEditMaster(subscriptionId, masterName, masterPlan) {
+    console.log('selectEditMaster:', subscriptionId, masterName, masterPlan);
+    document.getElementById('edit_new_subscription_id').value = subscriptionId;
+    document.getElementById('edit_selected_master_name').textContent = masterName;
+    document.getElementById('edit_selected_master_plan').textContent = 'Plan: ' + masterPlan;
+    document.getElementById('edit_selected_master').classList.remove('d-none');
+    document.getElementById('edit_master_search_results').innerHTML = '';
+    document.getElementById('edit_master_search').value = '';
 }
 </script>
