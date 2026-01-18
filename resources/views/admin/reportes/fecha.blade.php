@@ -72,6 +72,9 @@
                                 <tr>
                                     <td>
                                         {{ $cliente ? $cliente->full_name : 'Cliente' }}
+                                        @if($cliente)
+                                            @include('components.badges.invitado', ['client' => $cliente])
+                                        @endif
                                         @if($cliente && $cliente->invitedBy)
                                         <br><small class="text-muted">Invitado por {{ $cliente->invitedBy->full_name }}</small>
                                         @endif

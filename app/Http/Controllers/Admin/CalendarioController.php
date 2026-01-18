@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Event;
 use App\Models\Client;
+use App\Models\WhatsappContact;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class CalendarioController extends Controller
 {
@@ -153,6 +155,91 @@ class CalendarioController extends Controller
         return redirect()
             ->route('admin.calendario.index', ['year' => $date->year, 'month' => $date->month])
             ->with('success', 'Evento creado exitosamente.');
+    }
+
+    /**
+     * Buscar clientes por nombre, apellido o documento.
+     */
+    public function buscarClientes(Request $request)
+    {
+        $term = trim($request->get('term', ''));
+
+        if (mb_strlen($term) < 2) {
+            return response()->json([]);
+        }
+
+        $clients = Client::query()
+            ->where('first_name', 'like', '%' . $term . '%')
+            ->orWhere('last_name', 'like', '%' . $term . '%')
+            ->orWhere('document_number', 'like', '%' . $term . '%')
+            ->orderBy('first_name')
+            ->limit(8)
+            ->get(['id', 'first_name', 'last_name', 'document_number', 'phone']);
+
+        $payload = $clients->map(function ($client) {
+            return [
+                'id' => $client->id,
+                'full_name' => $client->full_name,
+                'document_number' => $client->document_number,
+                'phone' => $client->phone,
+            ];
+        });
+
+        return response()->json($payload);
+    }
+
+    /**
+     * Guardar contacto y actualizar teléfono si aplica.
+     */
+    public function guardarWhatsappContacto(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:200',
+            'phone' => 'required|string|max:30',
+            'client_id' => 'nullable|exists:clients,id',
+        ]);
+
+        $name = trim($validated['name']);
+        $phone = preg_replace('/\D+/', '', $validated['phone']);
+
+        if ($phone === '') {
+            return response()->json(['ok' => false, 'message' => 'Numero invalido.'], 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            if (!empty($validated['client_id'])) {
+                $client = Client::find($validated['client_id']);
+                if ($client && (!$client->phone || $client->phone !== $phone)) {
+                    $client->update(['phone' => $phone]);
+                }
+            } else {
+                WhatsappContact::updateOrCreate(
+                    ['phone' => $phone],
+                    [
+                        'name' => $name,
+                        'source' => 'calendario',
+                    ]
+                );
+            }
+
+            if (!empty($validated['client_id'])) {
+                WhatsappContact::updateOrCreate(
+                    ['phone' => $phone],
+                    [
+                        'client_id' => $validated['client_id'],
+                        'name' => $name,
+                        'source' => 'calendario',
+                    ]
+                );
+            }
+
+            DB::commit();
+            return response()->json(['ok' => true]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['ok' => false, 'message' => $e->getMessage()], 500);
+        }
     }
 
     /**

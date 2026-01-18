@@ -7,6 +7,10 @@
         body { font-family: DejaVu Sans, Arial, sans-serif; font-size: 12px; color: #222; }
         h1 { font-size: 18px; margin: 0 0 6px 0; }
         .subtle { color: #666; margin: 0 0 12px 0; }
+        .header { width: 100%; margin-bottom: 10px; border: none; }
+        .header td { vertical-align: middle; border: none; }
+        .header-info { font-size: 10px; color: #444; line-height: 1.4; }
+        .logo { height: 40px; }
         .summary { margin: 8px 0 12px 0; }
         .summary-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
         .summary-table td { border: 1px solid #e6e6e6; padding: 8px; vertical-align: top; }
@@ -28,10 +32,25 @@
     </style>
 </head>
 <body>
+    <table class="header">
+        <tr>
+            <td style="width: 40%;">
+                <img src="{{ public_path('images/logo.jpg') }}" alt="Conecta" class="logo">
+            </td>
+            <td style="width: 60%; text-align: right;">
+                <div class="header-info">
+                    <div>www.conectacowork.com</div>
+                    <div>Edificio la Previsora, Av. Naciones Unidas, y 1084, Quito 170507</div>
+                    <div>0968097085</div>
+                </div>
+            </td>
+        </tr>
+    </table>
     <h1>Detalle de Registro #{{ $subscription->id }}</h1>
     <p class="subtle">
-        {{ $client->full_name }} - {{ $subscription->plan->name ?? 'Plan' }}
-        ({{ $subscription->start_date->format('d/m/Y') }} - {{ $subscription->end_date->format('d/m/Y') }})
+        {{ $client->full_name }}{{ $client->invited_by_client_id ? ' (Invitado)' : '' }} - {{ $subscription->plan->name ?? 'Plan' }}
+        {{ $subscription->plan && $subscription->plan->is_pilot ? ' (Piloto)' : '' }}
+        ({{ $subscription->start_date->format('d/m/Y') }} - {{ $subscription->end_date ? $subscription->end_date->format('d/m/Y') : 'Sin vencimiento' }})
     </p>
 
     @php

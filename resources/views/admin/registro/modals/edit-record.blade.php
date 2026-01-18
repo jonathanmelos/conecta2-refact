@@ -41,6 +41,10 @@
                                    id="edit_check_in" 
                                    name="check_in" 
                                    required>
+                            <small class="text-muted d-block">
+                                Se interpreta en formato 12h (a.m./p.m.). Si escribes 24h, lo convertimos.
+                            </small>
+                            <small id="edit_check_in_preview" class="text-muted"></small>
                         </div>
                         
                         {{-- HORA DE SALIDA --}}
@@ -53,6 +57,10 @@
                                    id="edit_check_out" 
                                    name="check_out" 
                                    required>
+                            <small class="text-muted d-block">
+                                Se interpreta en formato 12h (a.m./p.m.). Si escribes 24h, lo convertimos.
+                            </small>
+                            <small id="edit_check_out_preview" class="text-muted"></small>
                         </div>
                     </div>
                     
@@ -60,6 +68,11 @@
                     <div id="edit_duration_preview" class="alert alert-success d-none mb-3">
                         <strong><i class="bi bi-clock-history"></i> Duración:</strong> 
                         <span id="duration_text"></span>
+                    </div>
+
+                    <div id="edit_time_warning" class="alert alert-danger d-none mb-3">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        La hora de salida debe ser posterior a la hora de entrada.
                     </div>
                     
                     <hr>
@@ -143,7 +156,7 @@
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
                         <i class="bi bi-x-circle"></i> Cancelar
                     </button>
-                    <button type="submit" class="btn btn-warning">
+                    <button type="submit" class="btn btn-warning" id="edit_record_submit">
                         <i class="bi bi-save"></i> Guardar Cambios
                     </button>
                 </div>

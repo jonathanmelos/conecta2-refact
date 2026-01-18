@@ -9,10 +9,11 @@ use App\Http\Controllers\Admin\ReporteController;
 use App\Http\Controllers\Admin\CalendarioController;
 use App\Http\Controllers\SelfServiceController;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Auth;
 
 // Ruta raíz redirige a registro (requiere login)
 Route::get('/', function () {
-    if (auth()->check()) {
+    if (Auth::check()) {
         return redirect()->route('admin.registro.index');
     }
     return redirect()->route('login');
@@ -30,7 +31,7 @@ Route::middleware('auth')->group(function () {
     
     // Dashboard principal (redirige según rol)
     Route::get('/dashboard', function () {
-        if (auth()->user()->role === 'admin') {
+        if (Auth::user()->role === 'admin') {
             return redirect()->route('admin.registro.index');
         }
         return redirect()->route('regular.registro.index');
@@ -68,7 +69,9 @@ Route::middleware('auth')->group(function () {
         Route::post('/clientes/{client}/renovar', [ClientController::class, 'renovar'])->name('clientes.renovar');
         Route::post('/clientes/{client}/modificar-plan', [ClientController::class, 'modificarPlan'])->name('clientes.modificarPlan');
         Route::post('/clientes/{client}/iniciar-plan', [ClientController::class, 'iniciarPlan'])->name('clientes.iniciarPlan');
+        Route::post('/clientes/{client}/recalcular-horas', [ClientController::class, 'recalcularHorasTracking'])->name('clientes.recalcularHorasTracking');
         Route::get('/clientes/{client}/registro/{subscription}', [ClientController::class, 'detalleRegistro'])->name('clientes.detalleRegistro');
+        Route::put('/clientes/{client}/registro/{subscription}/fechas', [ClientController::class, 'actualizarFechasPlan'])->name('clientes.actualizarFechasPlan');
         Route::get('/clientes/{client}/registro/{subscription}/excel', [ClientController::class, 'exportDetalleRegistroExcel'])->name('clientes.detalleRegistroExcel');
         Route::get('/clientes/{client}/registro/{subscription}/pdf', [ClientController::class, 'exportDetalleRegistroPdf'])->name('clientes.detalleRegistroPdf');
         Route::delete('/clientes/registro/{usageRecord}', [ClientController::class, 'eliminarRegistro'])->name('clientes.eliminarRegistro');
@@ -83,6 +86,8 @@ Route::middleware('auth')->group(function () {
         
         // Registro de uso
         Route::get('/registro', [RegistroController::class, 'index'])->name('registro.index');
+        Route::get('/registro/pendientes', [RegistroController::class, 'pendientes'])->name('registro.pendientes');
+        Route::delete('/registro/pendientes', [RegistroController::class, 'eliminarPendientesGrupo'])->name('registro.pendientes.delete');
         Route::get('/registro/buscar', [RegistroController::class, 'buscar'])->name('registro.buscar');
         Route::post('/registro/cowork', [RegistroController::class, 'cowork'])->name('registro.cowork');
         Route::post('/registro/sala', [RegistroController::class, 'sala'])->name('registro.sala');
@@ -104,6 +109,8 @@ Route::middleware('auth')->group(function () {
         // Calendario de Eventos
         Route::get('/calendario', [CalendarioController::class, 'index'])->name('calendario.index');
         Route::get('/calendario/crear', [CalendarioController::class, 'create'])->name('calendario.create');
+        Route::get('/calendario/clientes/buscar', [CalendarioController::class, 'buscarClientes'])->name('calendario.buscarClientes');
+        Route::post('/calendario/whatsapp-contacto', [CalendarioController::class, 'guardarWhatsappContacto'])->name('calendario.guardarWhatsappContacto');
         Route::post('/calendario', [CalendarioController::class, 'store'])->name('calendario.store');
         Route::get('/calendario/{evento}', [CalendarioController::class, 'show'])->name('calendario.show');
         Route::get('/calendario/{evento}/editar', [CalendarioController::class, 'edit'])->name('calendario.edit');
@@ -127,8 +134,6 @@ Route::middleware('auth')->group(function () {
         Route::get('/reportes', [ReporteController::class, 'index'])->name('reportes.index');
         
         // Calculadora
-        Route::get('/calculadora', function () {
-            return view('regular.calculadora');
-        })->name('calculadora');
+        Route::get('/calculadora', [ReporteController::class, 'calculadora'])->name('calculadora');
     });
 });

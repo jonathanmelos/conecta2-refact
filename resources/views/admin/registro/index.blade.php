@@ -85,19 +85,19 @@
                             <td style="min-width: 250px;">
                                 <a href="{{ route('admin.registro.index', ['doc' => $cliente->document_number]) }}" class="text-decoration-none">
                                     <strong>{{ $cliente->full_name }}</strong>
+                                    @include('components.badges.invitado', ['client' => $cliente])
                                 </a>
                                 
                                 {{-- Estado actual del cliente --}}
-                                @php
-                                    $clienteActual = App\Models\Client::with(['currentSubscription.plan', 'invitedBy.currentSubscription.plan'])->find($cliente->id);
-                                @endphp
-                                
-                                @if($clienteActual->invitedBy && $clienteActual->invitedBy->currentSubscription)
+                                @if($cliente->invitedBy && $cliente->invitedBy->currentSubscription)
                                     <br><small class="text-success">
-                                        <i class="bi bi-link-45deg"></i> Vinculado al plan <strong>{{ $clienteActual->invitedBy->currentSubscription->plan->name ?? 'N/A' }}</strong> de <strong>{{ $clienteActual->invitedBy->full_name }}</strong>
+                                        <i class="bi bi-link-45deg"></i> Vinculado al plan <strong>{{ $cliente->invitedBy->currentSubscription->plan->name ?? 'N/A' }}{{ $cliente->invitedBy->currentSubscription->plan && $cliente->invitedBy->currentSubscription->plan->is_pilot ? ' (Piloto)' : '' }}</strong> de <strong>{{ $cliente->invitedBy->full_name }}</strong>
                                     </small>
-                                @elseif($clienteActual->currentSubscription && $clienteActual->currentSubscription->plan && !$clienteActual->invitedBy)
-                                    <br><small class="badge bg-success">{{ $clienteActual->currentSubscription->plan->name }}</small>
+                                @elseif($cliente->currentSubscription && $cliente->currentSubscription->plan && !$cliente->invitedBy)
+                                    <br><small class="badge bg-success">
+                                        {{ $cliente->currentSubscription->plan->name }}
+                                        {{ $cliente->currentSubscription->plan->is_pilot ? ' (Piloto)' : '' }}
+                                    </small>
                                 @else
                                     <br><small class="badge bg-warning text-dark">Cliente Ocasional</small>
                                 @endif
@@ -226,7 +226,7 @@
                     <h6 class="mb-0">Estado del Plan</h6>
                 </div>
                 <div class="card-body">
-                    <h5>{{ $selectedClient->full_name }}</h5>
+                    <h5>{{ $selectedClient->full_name }} @include('components.badges.invitado', ['client' => $selectedClient])</h5>
                     
                     @if($selectedClient->invitedBy)
                         <div class="card border-warning mb-3">
@@ -251,18 +251,19 @@
                         <p class="mb-2">
                             <strong>Plan:</strong><br>
                             {{ $selectedClient->currentSubscription->plan->name }}
+                            {{ $selectedClient->currentSubscription->plan->is_pilot ? ' (Piloto)' : '' }}
                         </p>
                         
                         <p class="mb-2">
                             <strong>Vigencia:</strong><br>
                             {{ $selectedClient->currentSubscription->start_date->format('d/m/Y') }} -
-                            {{ $selectedClient->currentSubscription->end_date->format('d/m/Y') }}
+                            {{ $selectedClient->currentSubscription->end_date ? $selectedClient->currentSubscription->end_date->format('d/m/Y') : 'Sin vencimiento' }}
                         </p>
                         
                         <p class="mb-2">
                             <strong>Días restantes:</strong>
-                            <span class="badge {{ $selectedClient->currentSubscription->days_remaining < 5 ? 'bg-danger' : 'bg-success' }}">
-                                {{ $selectedClient->currentSubscription->days_remaining }} días
+                            <span class="badge {{ $selectedClient->currentSubscription->days_remaining !== null && $selectedClient->currentSubscription->days_remaining < 5 ? 'bg-danger' : 'bg-success' }}">
+                                {{ $selectedClient->currentSubscription->days_remaining !== null ? $selectedClient->currentSubscription->days_remaining . ' días' : 'Sin vencimiento' }}
                             </span>
                         </p>
                         

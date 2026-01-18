@@ -71,6 +71,9 @@
                                     <tr>
                                         <td>
                                             {{ $cliente ? $cliente->full_name : 'Cliente' }}
+                                            @if($cliente)
+                                                @include('components.badges.invitado', ['client' => $cliente])
+                                            @endif
                                             @if($cliente && $cliente->invitedBy)
                                             <br><small class="text-muted">Invitado por {{ $cliente->invitedBy->full_name }}</small>
                                             @endif
@@ -123,7 +126,12 @@
                             <tbody>
                                 @forelse($planes as $subscription)
                                     <tr>
-                                        <td>{{ $subscription->client?->full_name ?? 'Cliente' }}</td>
+                                        <td>
+                                            {{ $subscription->client?->full_name ?? 'Cliente' }}
+                                            @if($subscription->client)
+                                                @include('components.badges.invitado', ['client' => $subscription->client])
+                                            @endif
+                                        </td>
                                         <td>{{ $subscription->start_date->format('Y-m-d') }}</td>
                                         <td>{{ $subscription->end_date->format('Y-m-d') }}</td>
                                         <td>{{ $subscription->plan?->name ?? 'Plan' }}</td>

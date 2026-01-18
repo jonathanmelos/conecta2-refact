@@ -114,6 +114,127 @@ class RegistroController extends Controller
             'registrosHoy'
         ));
     }
+
+    public function pendientes()
+    {
+        $records = UsageRecord::with(['client', 'subscription.plan'])
+            ->where('status', 'in_progress')
+            ->orderBy('check_in')
+            ->get();
+
+        $groups = [
+            'today' => [
+                'label' => 'Hoy',
+                'hint' => 'Registros del dia actual.',
+                'records' => collect(),
+            ],
+            'recent' => [
+                'label' => 'Ultima semana',
+                'hint' => 'Registros entre 1 y 7 dias.',
+                'records' => collect(),
+            ],
+            'over_week' => [
+                'label' => 'Mas de una semana',
+                'hint' => 'Registros entre 8 y 30 dias.',
+                'records' => collect(),
+            ],
+            'over_month' => [
+                'label' => 'Mas de un mes',
+                'hint' => 'Registros entre 31 y 90 dias.',
+                'records' => collect(),
+            ],
+            'over_three_months' => [
+                'label' => 'Mas de tres meses',
+                'hint' => 'Registros entre 91 y 180 dias.',
+                'records' => collect(),
+            ],
+            'very_old' => [
+                'label' => 'Muy antiguos',
+                'hint' => 'Registros con mas de 180 dias.',
+                'records' => collect(),
+            ],
+        ];
+
+        $now = now();
+        foreach ($records as $record) {
+            $days = $record->check_in->diffInDays($now);
+            if ($record->check_in->isToday()) {
+                $key = 'today';
+            } elseif ($days <= 7) {
+                $key = 'recent';
+            } elseif ($days <= 30) {
+                $key = 'over_week';
+            } elseif ($days <= 90) {
+                $key = 'over_month';
+            } elseif ($days <= 180) {
+                $key = 'over_three_months';
+            } else {
+                $key = 'very_old';
+            }
+
+            $groups[$key]['records']->push($record);
+        }
+
+        return view('admin.registro.pendientes', compact('groups'));
+    }
+
+    public function eliminarPendientesGrupo(Request $request)
+    {
+        $validated = $request->validate([
+            'group' => 'required|string',
+        ]);
+
+        $groupKey = $validated['group'];
+        $allowed = [
+            'today',
+            'recent',
+            'over_week',
+            'over_month',
+            'over_three_months',
+            'very_old',
+        ];
+
+        if (!in_array($groupKey, $allowed, true)) {
+            return redirect()->back()->with('error', 'Grupo de pendientes no valido.');
+        }
+
+        $todayStart = now()->startOfDay();
+        $weekStart = now()->subDays(7)->startOfDay();
+        $overWeekStart = now()->subDays(30)->startOfDay();
+        $monthStart = now()->subDays(90)->startOfDay();
+        $threeMonthsStart = now()->subDays(180)->startOfDay();
+
+        $query = UsageRecord::where('status', 'in_progress');
+
+        switch ($groupKey) {
+            case 'today':
+                $query->whereDate('check_in', $todayStart);
+                break;
+            case 'recent':
+                $query->where('check_in', '<', $todayStart)
+                    ->where('check_in', '>=', $weekStart);
+                break;
+            case 'over_week':
+                $query->where('check_in', '<', $weekStart)
+                    ->where('check_in', '>=', $overWeekStart);
+                break;
+            case 'over_month':
+                $query->where('check_in', '<', $overWeekStart)
+                    ->where('check_in', '>=', $monthStart);
+                break;
+            case 'over_three_months':
+                $query->where('check_in', '<', $monthStart)
+                    ->where('check_in', '>=', $threeMonthsStart);
+                break;
+            case 'very_old':
+                $query->where('check_in', '<', $threeMonthsStart);
+                break;
+        }
+
+        $deleted = $query->delete();
+
+        return redirect()->back()->with('success', 'Registros eliminados: ' . $deleted);
+    }
     
     public function buscar(Request $request)
     {

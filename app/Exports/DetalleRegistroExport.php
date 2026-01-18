@@ -10,10 +10,12 @@ use Maatwebsite\Excel\Concerns\WithHeadings;
 class DetalleRegistroExport implements FromArray, WithHeadings
 {
     private Subscription $subscription;
+    private ?int $clientId;
 
-    public function __construct(Subscription $subscription)
+    public function __construct(Subscription $subscription, ?int $clientId = null)
     {
         $this->subscription = $subscription->load('client');
+        $this->clientId = $clientId;
     }
 
     public function headings(): array
@@ -36,6 +38,9 @@ class DetalleRegistroExport implements FromArray, WithHeadings
             ->where('subscription_id', $this->subscription->id)
             ->orderBy('check_in', 'desc')
             ->get();
+        if ($this->clientId) {
+            $registros = $registros->where('client_id', $this->clientId)->values();
+        }
 
         $rows = [];
         foreach ($registros as $registro) {

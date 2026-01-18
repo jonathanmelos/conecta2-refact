@@ -4,7 +4,7 @@
 <div class="row">
     <div class="col-12">
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2>Gestión de Plan - {{ $client->full_name }}</h2>
+            <h2>Gestión de Plan - {{ $client->full_name }} @include('components.badges.invitado', ['client' => $client])</h2>
             <a href="{{ route('admin.clientes.index') }}" class="btn btn-secondary">
                 Volver al listado
             </a>
@@ -58,23 +58,31 @@
                 {{-- Plan Vigente --}}
                 @if($planVigente)
                     @php
-                        $diasRestantes = now()->diffInDays($planVigente->end_date, false);
-                        $colorBoton = $diasRestantes <= 5 ? 'btn-danger' : ($diasRestantes <= 10 ? 'btn-warning' : 'btn-success');
+                        $endDate = $planVigente->end_date;
+                        $diasRestantes = $endDate ? now()->diffInDays($endDate, false) : null;
+                        $colorBoton = $diasRestantes === null
+                            ? 'btn-success'
+                            : ($diasRestantes <= 5 ? 'btn-danger' : ($diasRestantes <= 10 ? 'btn-warning' : 'btn-success'));
                     @endphp
                     <div class="card mb-4 border-success">
                         <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
                             <h5 class="mb-0">Plan Vigente</h5>
                             <span class="badge bg-light text-dark">
-                                {{ $diasRestantes }} días restantes
+                                {{ $diasRestantes === null ? 'Sin vencimiento' : (int) $diasRestantes . ' días restantes' }}
                             </span>
                         </div>
                         <div class="card-body">
                             <div class="row mb-3">
                                 <div class="col-md-6">
-                                    <h4>{{ $planVigente->plan->name }}</h4>
+                                    <h4>
+                                        {{ $planVigente->plan->name }}
+                                        @if($planVigente->plan->is_pilot)
+                                            <span class="badge bg-info text-dark ms-1">Piloto</span>
+                                        @endif
+                                    </h4>
                                     <p class="text-muted mb-1">
                                         <strong>Fecha de vencimiento:</strong><br>
-                                        {{ $planVigente->end_date->locale('es')->isoFormat('D [de] MMMM [de] YYYY') }}
+                                        {{ $endDate ? $endDate->locale('es')->isoFormat('D [de] MMMM [de] YYYY') : 'Sin vencimiento' }}
                                     </p>
                                     <p class="mb-0">
                                         <strong>Precio:</strong> ${{ number_format($planVigente->plan->price, 2) }}
@@ -88,9 +96,21 @@
                                     <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalModificar">
                                         Modificar Plan
                                     </button>
-                                    <a href="{{ route('admin.clientes.detalleRegistro', [$client, $planVigente]) }}" class="btn btn-outline-secondary">
-                                        Detalle Registro
-                                    </a>
+                                    @if($detalleRegistroSubscription)
+                                        <a href="{{ route('admin.clientes.detalleRegistro', [$client, $detalleRegistroSubscription]) }}" class="btn btn-outline-secondary">
+                                            Detalle Registro
+                                        </a>
+                                    @endif
+                                    <form method="POST"
+                                          action="{{ route('admin.clientes.recalcularHorasTracking', $client) }}"
+                                          class="d-inline-block"
+                                          onsubmit="return confirm('¿Recalcular horas usadas del plan actual? Esto reemplazará hours_tracking con los registros reales.')">
+                                        @csrf
+                                        <input type="hidden" name="subscription_id" value="{{ $planVigente->id }}">
+                                        <button type="submit" class="btn btn-outline-warning">
+                                            Recalcular Horas
+                                        </button>
+                                    </form>
                                 </div>
                             </div>
 
@@ -117,21 +137,25 @@
                                                      aria-valuenow="{{ $porcentajeCowork }}"
                                                      aria-valuemin="0"
                                                      aria-valuemax="100">
-                                                    {{ number_format($porcentajeCowork, 1) }}%
+                                                    {{ $planVigente->plan->is_pilot ? 'Sin limite' : number_format($porcentajeCowork, 1) . '%' }}
                                                 </div>
                                             </div>
                                             <table class="table table-sm table-borderless mb-0">
                                                 <tr>
                                                     <td>Contratadas:</td>
-                                                    <td class="text-end"><strong>{{ $consumo['cowork']['contratadas'] }} hrs</strong></td>
+                                                    <td class="text-end">
+                                                        <strong>{{ $planVigente->plan->is_pilot ? 'Ilimitadas' : $consumo['cowork']['contratadas'] . ' hrs' }}</strong>
+                                                    </td>
                                                 </tr>
                                                 <tr>
                                                     <td>Usadas:</td>
                                                     <td class="text-end">{{ number_format($consumo['cowork']['usadas'], 2) }} hrs</td>
                                                 </tr>
-                                                <tr class="{{ $consumo['cowork']['restantes'] < 0 ? 'text-danger' : 'text-success' }}">
+                                                <tr class="{{ $planVigente->plan->is_pilot ? 'text-success' : ($consumo['cowork']['restantes'] < 0 ? 'text-danger' : 'text-success') }}">
                                                     <td>Restantes:</td>
-                                                    <td class="text-end"><strong>{{ number_format($consumo['cowork']['restantes'], 2) }} hrs</strong></td>
+                                                    <td class="text-end">
+                                                        <strong>{{ $planVigente->plan->is_pilot ? 'Ilimitadas' : number_format($consumo['cowork']['restantes'], 2) . ' hrs' }}</strong>
+                                                    </td>
                                                 </tr>
                                             </table>
                                         </div>
@@ -156,21 +180,25 @@
                                                      aria-valuenow="{{ $porcentajeSala }}"
                                                      aria-valuemin="0"
                                                      aria-valuemax="100">
-                                                    {{ number_format($porcentajeSala, 1) }}%
+                                                    {{ $planVigente->plan->is_pilot ? 'Sin limite' : number_format($porcentajeSala, 1) . '%' }}
                                                 </div>
                                             </div>
                                             <table class="table table-sm table-borderless mb-0">
                                                 <tr>
                                                     <td>Contratadas:</td>
-                                                    <td class="text-end"><strong>{{ $consumo['sala']['contratadas'] }} hrs</strong></td>
+                                                    <td class="text-end">
+                                                        <strong>{{ $planVigente->plan->is_pilot ? 'Ilimitadas' : $consumo['sala']['contratadas'] . ' hrs' }}</strong>
+                                                    </td>
                                                 </tr>
                                                 <tr>
                                                     <td>Usadas:</td>
                                                     <td class="text-end">{{ number_format($consumo['sala']['usadas'], 2) }} hrs</td>
                                                 </tr>
-                                                <tr class="{{ $consumo['sala']['restantes'] < 0 ? 'text-danger' : 'text-success' }}">
+                                                <tr class="{{ $planVigente->plan->is_pilot ? 'text-success' : ($consumo['sala']['restantes'] < 0 ? 'text-danger' : 'text-success') }}">
                                                     <td>Restantes:</td>
-                                                    <td class="text-end"><strong>{{ number_format($consumo['sala']['restantes'], 2) }} hrs</strong></td>
+                                                    <td class="text-end">
+                                                        <strong>{{ $planVigente->plan->is_pilot ? 'Ilimitadas' : number_format($consumo['sala']['restantes'], 2) . ' hrs' }}</strong>
+                                                    </td>
                                                 </tr>
                                             </table>
                                         </div>
@@ -246,6 +274,47 @@
                     </div>
                 @endif
 
+                {{-- Plan del anfitrion (si es invitado y no tiene plan propio) --}}
+                @if(!$planVigente && $planInvitador)
+                    <div class="card mb-4 border-success">
+                        <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Plan del anfitrion</h5>
+                            <span class="badge bg-light text-dark">
+                                {{ $planInvitador->end_date ? 'Vigente' : 'Sin vencimiento' }}
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <h4>
+                                        {{ $planInvitador->plan->name ?? 'Plan' }}
+                                        {{ $planInvitador->plan && $planInvitador->plan->is_pilot ? ' (Piloto)' : '' }}
+                                    </h4>
+                                    <p class="text-muted mb-1">
+                                        <strong>Cliente anfitrion:</strong><br>
+                                        {{ $client->invitedBy->full_name }}
+                                    </p>
+                                    <p class="text-muted mb-1">
+                                        <strong>Vigencia:</strong><br>
+                                        {{ $planInvitador->start_date->format('d/m/Y') }} -
+                                        {{ $planInvitador->end_date ? $planInvitador->end_date->format('d/m/Y') : 'Sin vencimiento' }}
+                                    </p>
+                                </div>
+                                <div class="col-md-6 text-end">
+                                    @if($detalleRegistroSubscription)
+                                        <a href="{{ route('admin.clientes.detalleRegistro', [$client, $detalleRegistroSubscription]) }}" class="btn btn-outline-secondary">
+                                            Ver registros del invitado
+                                        </a>
+                                    @endif
+                                </div>
+                            </div>
+                            <div class="alert alert-info mb-0">
+                                Los registros de este invitado se contabilizan dentro del plan del anfitrion.
+                            </div>
+                        </div>
+                    </div>
+                @endif
+
                 {{-- Plan Futuro (si existe) --}}
                 @if($planFuturo)
                     <div class="card mb-4 border-info">
@@ -258,12 +327,15 @@
                         <div class="card-body">
                             <div class="row">
                                 <div class="col-md-8">
-                                    <h5>{{ $planFuturo->plan->name }}</h5>
+                                    <h5>
+                                        {{ $planFuturo->plan->name }}
+                                        {{ $planFuturo->plan && $planFuturo->plan->is_pilot ? ' (Piloto)' : '' }}
+                                    </h5>
                                     <p class="mb-1">
                                         <strong>Fecha inicio:</strong> {{ $planFuturo->start_date->format('d/m/Y') }}
                                     </p>
                                     <p class="mb-0">
-                                        <strong>Fecha fin:</strong> {{ $planFuturo->end_date->format('d/m/Y') }}
+                                        <strong>Fecha fin:</strong> {{ $planFuturo->end_date ? $planFuturo->end_date->format('d/m/Y') : 'Sin vencimiento' }}
                                     </p>
                                 </div>
                                 <div class="col-md-4 text-end">
@@ -303,7 +375,8 @@
                                     <tbody>
                                         @foreach($historialPlanes as $subscription)
                                             @php
-                                                $esVigente = $subscription->start_date <= now() && $subscription->end_date >= now();
+                                                $esVigente = $subscription->start_date <= now()
+                                                    && ($subscription->end_date ? $subscription->end_date >= now() : true);
                                                 $esFuturo = $subscription->start_date > now();
                                             @endphp
                                             <tr class="{{ $esVigente ? 'table-success' : ($esFuturo ? 'table-info' : '') }}"
@@ -312,6 +385,7 @@
                                                 <td>{{ $subscription->id }}</td>
                                                 <td>
                                                     {{ $subscription->plan->name ?? 'N/A' }}
+                                                    {{ $subscription->plan && $subscription->plan->is_pilot ? ' (Piloto)' : '' }}
                                                     @if($esVigente)
                                                         <span class="badge bg-success">Vigente</span>
                                                     @elseif($esFuturo)
@@ -319,7 +393,7 @@
                                                     @endif
                                                 </td>
                                                 <td>{{ $subscription->start_date->format('d/m/Y') }}</td>
-                                                <td>{{ $subscription->end_date->format('d/m/Y') }}</td>
+                                                <td>{{ $subscription->end_date ? $subscription->end_date->format('d/m/Y') : 'Sin vencimiento' }}</td>
                                             </tr>
                                         @endforeach
                                     </tbody>
@@ -343,7 +417,9 @@
                             @foreach($client->guests as $guest)
                                 <li class="list-group-item d-flex justify-content-between align-items-center">
                                     <div>
-                                        <strong>{{ $guest->full_name }}</strong><br>
+                                        <strong>{{ $guest->full_name }}</strong>
+                                        @include('components.badges.invitado', ['client' => $guest])
+                                        <br>
                                         <small class="text-muted">{{ $guest->document_number }}</small>
                                     </div>
                                     <form action="{{ route('admin.clientes.unlinkGuest', $guest->id) }}" method="POST">
@@ -376,7 +452,10 @@
                 </div>
                 <div class="modal-body">
                     <p>Renovar plan para <strong>{{ $client->full_name }}</strong></p>
-                    <p class="text-muted">El nuevo plan iniciará el <strong>{{ $planVigente->end_date->copy()->addDay()->format('d/m/Y') }}</strong></p>
+                    <p class="text-muted">
+                        El nuevo plan iniciará el
+                        <strong>{{ $planVigente->end_date ? $planVigente->end_date->copy()->addDay()->format('d/m/Y') : now()->format('d/m/Y') }}</strong>
+                    </p>
 
                     <div class="mb-3">
                         <label for="renovar_plan_id" class="form-label">Seleccione el plan:</label>
@@ -384,7 +463,7 @@
                             @foreach($plans as $plan)
                                 <option value="{{ $plan->id }}"
                                         {{ $planVigente->plan_id == $plan->id ? 'selected' : '' }}>
-                                    {{ $plan->name }} - ${{ number_format($plan->price, 2) }}
+                                    {{ $plan->name }}{{ $plan->is_pilot ? ' (Piloto)' : '' }} - ${{ number_format($plan->price, 2) }}
                                 </option>
                             @endforeach
                         </select>
@@ -419,7 +498,7 @@
                             @foreach($plans as $plan)
                                 <option value="{{ $plan->id }}"
                                         {{ $planVigente->plan_id == $plan->id ? 'selected' : '' }}>
-                                    {{ $plan->name }} - ${{ number_format($plan->price, 2) }}
+                                    {{ $plan->name }}{{ $plan->is_pilot ? ' (Piloto)' : '' }} - ${{ number_format($plan->price, 2) }}
                                 </option>
                             @endforeach
                         </select>

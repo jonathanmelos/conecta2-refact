@@ -167,7 +167,11 @@ class ReporteController extends Controller
             $otherPlans = $plans;
         }
 
-        return view('admin.calculadora', [
+        $view = $request->routeIs('regular.calculadora')
+            ? 'regular.calculadora'
+            : 'admin.calculadora';
+
+        return view($view, [
             'plans' => $plans,
             'inputs' => $inputs,
             'horasEstimadas' => $horasEstimadas,

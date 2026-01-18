@@ -11,7 +11,10 @@
         <div class="collapse mt-2" id="historial-{{ $cliente->id }}">
             <div class="card shadow-sm" style="max-width: 100%; width: 100%;">
                 <div class="card-header bg-gradient text-white py-2" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
-                    <small><strong><i class="bi bi-calendar-day"></i> Registros de hoy - {{ $cliente->full_name }}</strong></small>
+                    <small>
+                        <strong><i class="bi bi-calendar-day"></i> Registros de hoy - {{ $cliente->full_name }}</strong>
+                        @include('components.badges.invitado', ['client' => $cliente])
+                    </small>
                 </div>
                 <div class="card-body p-0" style="overflow-x: auto; max-height: 400px;">
                     <table class="table table-sm table-hover mb-0" style="font-size: 0.75rem; min-width: 650px;">
@@ -35,7 +38,8 @@
                                     // ⭐ Preparar datos del plan de forma segura
                                     $planName = '';
                                     if ($reg->subscription && $reg->subscription->plan) {
-                                        $planName = $reg->subscription->plan->name;
+                                        $planName = $reg->subscription->plan->name
+                                            . ($reg->subscription->plan->is_pilot ? ' (Piloto)' : '');
                                     }
                                 @endphp
                                 <tr class="{{ $reg->status === 'in_progress' ? ($esRegistroAntiguo ? 'table-danger' : 'table-warning') : '' }}" 

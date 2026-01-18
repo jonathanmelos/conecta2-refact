@@ -55,13 +55,13 @@ if (masterSearchInput) {
                         if (client.current_subscription && client.current_subscription.plan) {
                             html += `
                                 <a href="#" class="list-group-item list-group-item-action" 
-                                   onclick="selectMaster(${client.id}, '${client.first_name} ${client.last_name}', '${client.current_subscription.plan.name}'); return false;">
+                                   onclick="selectMaster(${client.id}, '${client.first_name} ${client.last_name}', '${client.current_subscription.plan.name}${client.current_subscription.plan.is_pilot ? ' (Piloto)' : ''}'); return false;">
                                     <div class="d-flex justify-content-between align-items-center">
                                         <div>
                                             <strong>${client.first_name} ${client.last_name}</strong>
                                             <br><small class="text-muted">${client.document_number}</small>
                                         </div>
-                                        <span class="badge bg-success">${client.current_subscription.plan.name}</span>
+                                        <span class="badge bg-success">${client.current_subscription.plan.name}${client.current_subscription.plan.is_pilot ? ' (Piloto)' : ''}</span>
                                     </div>
                                 </a>
                             `;
@@ -135,7 +135,7 @@ function openEditModal(recordId, serviceType, clientName, checkIn, checkOut, sub
     
     // Fechas
     document.getElementById('edit_check_in').value = checkIn;
-    document.getElementById('edit_check_out').value = checkOut || checkIn;
+    document.getElementById('edit_check_out').value = checkOut || '';
     
     // ⭐ Mostrar plan actual
     const planInfo = document.getElementById('edit_current_plan_info');
@@ -165,10 +165,53 @@ function setupDurationCalculator() {
     const checkOutInput = document.getElementById('edit_check_out');
     const durationPreview = document.getElementById('edit_duration_preview');
     const durationText = document.getElementById('duration_text');
+    const timeWarning = document.getElementById('edit_time_warning');
+    const submitButton = document.getElementById('edit_record_submit');
+    const checkInPreview = document.getElementById('edit_check_in_preview');
+    const checkOutPreview = document.getElementById('edit_check_out_preview');
+
+    function formatTo12h(value) {
+        if (!value) {
+            return '';
+        }
+
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return '';
+        }
+
+        let hours = date.getHours();
+        const minutes = date.getMinutes();
+        const suffix = hours >= 12 ? 'p.m.' : 'a.m.';
+        hours = hours % 12;
+        hours = hours === 0 ? 12 : hours;
+        return `${hours}:${String(minutes).padStart(2, '0')} ${suffix}`;
+    }
+
+    function updatePreview() {
+        if (checkInPreview) {
+            checkInPreview.textContent = checkInInput.value
+                ? `Hora interpretada: ${formatTo12h(checkInInput.value)}`
+                : '';
+        }
+        if (checkOutPreview) {
+            checkOutPreview.textContent = checkOutInput.value
+                ? `Hora interpretada: ${formatTo12h(checkOutInput.value)}`
+                : '';
+        }
+    }
     
     function calculateDuration() {
         const checkIn = new Date(checkInInput.value);
         const checkOut = new Date(checkOutInput.value);
+
+        updatePreview();
+        if (timeWarning) {
+            timeWarning.classList.add('d-none');
+        }
+        if (submitButton) {
+            submitButton.disabled = false;
+        }
         
         if (checkIn && checkOut && checkOut > checkIn) {
             const diffMs = checkOut - checkIn;
@@ -178,6 +221,14 @@ function setupDurationCalculator() {
             
             durationText.textContent = `${hours} horas y ${minutes} minutos (${diffHours.toFixed(2)} horas)`;
             durationPreview.classList.remove('d-none');
+        } else if (checkInInput.value && checkOutInput.value) {
+            durationPreview.classList.add('d-none');
+            if (timeWarning) {
+                timeWarning.classList.remove('d-none');
+            }
+            if (submitButton) {
+                submitButton.disabled = true;
+            }
         } else {
             durationPreview.classList.add('d-none');
         }
@@ -185,9 +236,13 @@ function setupDurationCalculator() {
     
     checkInInput.removeEventListener('change', calculateDuration);
     checkOutInput.removeEventListener('change', calculateDuration);
+    checkInInput.removeEventListener('input', calculateDuration);
+    checkOutInput.removeEventListener('input', calculateDuration);
     
     checkInInput.addEventListener('change', calculateDuration);
     checkOutInput.addEventListener('change', calculateDuration);
+    checkInInput.addEventListener('input', calculateDuration);
+    checkOutInput.addEventListener('input', calculateDuration);
     
     calculateDuration();
 }
@@ -234,13 +289,13 @@ if (editMasterSearchInput) {
                         if (client.current_subscription && client.current_subscription.plan) {
                             html += `
                                 <a href="#" class="list-group-item list-group-item-action" 
-                                   onclick="selectEditMaster(${client.current_subscription.id}, '${client.first_name} ${client.last_name}', '${client.current_subscription.plan.name}'); return false;">
+                                   onclick="selectEditMaster(${client.current_subscription.id}, '${client.first_name} ${client.last_name}', '${client.current_subscription.plan.name}${client.current_subscription.plan.is_pilot ? ' (Piloto)' : ''}'); return false;">
                                     <div class="d-flex justify-content-between align-items-center">
                                         <div>
                                             <strong>${client.first_name} ${client.last_name}</strong>
                                             <br><small class="text-muted">${client.document_number}</small>
                                         </div>
-                                        <span class="badge bg-success">${client.current_subscription.plan.name}</span>
+                                        <span class="badge bg-success">${client.current_subscription.plan.name}${client.current_subscription.plan.is_pilot ? ' (Piloto)' : ''}</span>
                                     </div>
                                 </a>
                             `;

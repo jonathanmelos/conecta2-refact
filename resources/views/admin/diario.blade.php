@@ -113,6 +113,7 @@
                         <th>Entrada</th>
                         <th>Salida</th>
                         <th>Horas Usadas</th>
+                        <th class="text-end">Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -120,8 +121,12 @@
                     <tr>
                         <td>
                             <strong>{{ $registro->client->full_name }}</strong>
+                            @include('components.badges.invitado', ['client' => $registro->client])
                             @if($registro->client->currentSubscription)
-                                <br><small class="text-muted">{{ $registro->client->currentSubscription->plan->name }}</small>
+                                <br><small class="text-muted">
+                                    {{ $registro->client->currentSubscription->plan->name }}
+                                    {{ $registro->client->currentSubscription->plan->is_pilot ? ' (Piloto)' : '' }}
+                                </small>
                             @endif
                         </td>
                         <td>{{ $registro->client->phone }}</td>
@@ -145,10 +150,32 @@
                                 <span class="text-muted">-</span>
                             @endif
                         </td>
+                        <td class="text-end">
+                            @php
+                                $planLabel = $registro->subscription && $registro->subscription->plan
+                                    ? $registro->subscription->plan->name . ($registro->subscription->plan->is_pilot ? ' (Piloto)' : '')
+                                    : 'Sin plan';
+                            @endphp
+                            <button type="button"
+                                    class="btn btn-outline-primary btn-sm me-1"
+                                    onclick='openEditModal({{ $registro->id }}, "{{ $registro->service_type }}", "{{ addslashes($registro->client->full_name) }}", "{{ $registro->check_in->format("Y-m-d\\TH:i") }}", "{{ $registro->check_out ? $registro->check_out->format("Y-m-d\\TH:i") : "" }}", {{ $registro->subscription_id ?? "null" }}, "{{ addslashes($planLabel) }}")'>
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <form method="POST"
+                                  action="{{ route('admin.clientes.eliminarRegistro', $registro) }}"
+                                  class="d-inline"
+                                  onsubmit="return confirm('Confirma eliminar este registro?')">
+                                @csrf
+                                @method('DELETE')
+                                <button type="submit" class="btn btn-outline-danger btn-sm">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </td>
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="5" class="text-center text-muted py-4">
+                        <td colspan="6" class="text-center text-muted py-4">
                             No hay registros de cowork para esta fecha
                         </td>
                     </tr>
@@ -172,6 +199,7 @@
                         <th>Entrada</th>
                         <th>Salida</th>
                         <th>Horas Usadas</th>
+                        <th class="text-end">Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -179,8 +207,12 @@
                     <tr>
                         <td>
                             <strong>{{ $registro->client->full_name }}</strong>
+                            @include('components.badges.invitado', ['client' => $registro->client])
                             @if($registro->client->currentSubscription)
-                                <br><small class="text-muted">{{ $registro->client->currentSubscription->plan->name }}</small>
+                                <br><small class="text-muted">
+                                    {{ $registro->client->currentSubscription->plan->name }}
+                                    {{ $registro->client->currentSubscription->plan->is_pilot ? ' (Piloto)' : '' }}
+                                </small>
                             @endif
                         </td>
                         <td>{{ $registro->client->phone }}</td>
@@ -204,10 +236,32 @@
                                 <span class="text-muted">-</span>
                             @endif
                         </td>
+                        <td class="text-end">
+                            @php
+                                $planLabel = $registro->subscription && $registro->subscription->plan
+                                    ? $registro->subscription->plan->name . ($registro->subscription->plan->is_pilot ? ' (Piloto)' : '')
+                                    : 'Sin plan';
+                            @endphp
+                            <button type="button"
+                                    class="btn btn-outline-primary btn-sm me-1"
+                                    onclick='openEditModal({{ $registro->id }}, "{{ $registro->service_type }}", "{{ addslashes($registro->client->full_name) }}", "{{ $registro->check_in->format("Y-m-d\\TH:i") }}", "{{ $registro->check_out ? $registro->check_out->format("Y-m-d\\TH:i") : "" }}", {{ $registro->subscription_id ?? "null" }}, "{{ addslashes($planLabel) }}")'>
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <form method="POST"
+                                  action="{{ route('admin.clientes.eliminarRegistro', $registro) }}"
+                                  class="d-inline"
+                                  onsubmit="return confirm('Confirma eliminar este registro?')">
+                                @csrf
+                                @method('DELETE')
+                                <button type="submit" class="btn btn-outline-danger btn-sm">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </td>
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="5" class="text-center text-muted py-4">
+                        <td colspan="6" class="text-center text-muted py-4">
                             No hay registros de sala para esta fecha
                         </td>
                     </tr>
@@ -238,8 +292,12 @@
                     <tr>
                         <td>
                             <strong>{{ $item['client']->full_name }}</strong>
+                            @include('components.badges.invitado', ['client' => $item['client']])
                             @if($item['client']->currentSubscription)
-                                <br><small class="text-muted">{{ $item['client']->currentSubscription->plan->name }}</small>
+                                <br><small class="text-muted">
+                                    {{ $item['client']->currentSubscription->plan->name }}
+                                    {{ $item['client']->currentSubscription->plan->is_pilot ? ' (Piloto)' : '' }}
+                                </small>
                             @endif
                         </td>
                         <td>{{ $item['client']->phone }}</td>
@@ -269,9 +327,12 @@
         </div>
     </div>
 </div>
+
+@include('admin.registro.modals.edit-record')
 @endsection
 
 @push('scripts')
+@include('admin.registro.scripts.modals')
 <script>
 // Auto-refresh cada 5 minutos para datos en tiempo real
 setTimeout(function() {

@@ -32,7 +32,10 @@ class ClientController extends Controller
                 $join->on('clients.current_subscription_id', '=', 'subscriptions.id')
                      ->where('subscriptions.status', '=', 'active')
                      ->whereDate('subscriptions.start_date', '<=', $today)
-                     ->whereDate('subscriptions.end_date', '>=', $today);
+                     ->where(function($query) use ($today) {
+                         $query->whereDate('subscriptions.end_date', '>=', $today)
+                               ->orWhereNull('subscriptions.end_date');
+                     });
             })
             ->select('clients.*')
             ->selectRaw("CASE
@@ -136,7 +139,7 @@ class ClientController extends Controller
                 ]);
 
                 // Crear registros de horas
-                if ($plan->cowork_hours > 0) {
+                if ($plan->is_pilot || $plan->cowork_hours > 0) {
                     HoursTracking::create([
                         'client_id' => $client->id,
                         'subscription_id' => $subscription->id,
@@ -147,7 +150,7 @@ class ClientController extends Controller
                     ]);
                 }
 
-                if ($plan->meeting_room_hours > 0) {
+                if ($plan->is_pilot || $plan->meeting_room_hours > 0) {
                     HoursTracking::create([
                         'client_id' => $client->id,
                         'subscription_id' => $subscription->id,
@@ -283,9 +286,19 @@ class ClientController extends Controller
         $planVigente = $client->subscriptions()
             ->where('status', 'active')
             ->whereDate('start_date', '<=', now())
-            ->whereDate('end_date', '>=', now())
+            ->where(function($query) {
+                $query->whereDate('end_date', '>=', now())
+                      ->orWhereNull('end_date');
+            })
             ->with('plan')
             ->first();
+
+        $planInvitador = null;
+        $detalleRegistroSubscription = $planVigente;
+        if (!$detalleRegistroSubscription && $client->invitedBy && $client->invitedBy->currentSubscription) {
+            $planInvitador = $client->invitedBy->currentSubscription;
+            $detalleRegistroSubscription = $planInvitador;
+        }
 
         // Obtener plan futuro (start_date > fecha actual)
         $planFuturo = $client->subscriptions()
@@ -303,6 +316,7 @@ class ClientController extends Controller
         // Calcular consumo si hay plan vigente
         $consumo = null;
         if ($planVigente) {
+            $isPilotPlan = (bool) $planVigente->plan->is_pilot;
             $hoursCowork = HoursTracking::where('subscription_id', $planVigente->id)
                 ->where('service_type', 'cowork')
                 ->first();
@@ -318,14 +332,14 @@ class ClientController extends Controller
 
             $consumo = [
                 'cowork' => [
-                    'contratadas' => $planVigente->plan->cowork_hours,
+                    'contratadas' => $isPilotPlan ? null : $planVigente->plan->cowork_hours,
                     'usadas' => $hoursCowork ? $hoursCowork->hours_used : 0,
-                    'restantes' => $planVigente->plan->cowork_hours - ($hoursCowork ? $hoursCowork->hours_used : 0),
+                    'restantes' => $isPilotPlan ? null : $planVigente->plan->cowork_hours - ($hoursCowork ? $hoursCowork->hours_used : 0),
                 ],
                 'sala' => [
-                    'contratadas' => $planVigente->plan->meeting_room_hours,
+                    'contratadas' => $isPilotPlan ? null : $planVigente->plan->meeting_room_hours,
                     'usadas' => $hoursSala ? $hoursSala->hours_used : 0,
-                    'restantes' => $planVigente->plan->meeting_room_hours - ($hoursSala ? $hoursSala->hours_used : 0),
+                    'restantes' => $isPilotPlan ? null : $planVigente->plan->meeting_room_hours - ($hoursSala ? $hoursSala->hours_used : 0),
                 ],
                 'impresiones' => [
                     'contratadas' => $planVigente->plan->prints_included,
@@ -340,6 +354,8 @@ class ClientController extends Controller
             'client',
             'plans',
             'planVigente',
+            'planInvitador',
+            'detalleRegistroSubscription',
             'planFuturo',
             'historialPlanes',
             'consumo'
@@ -368,7 +384,9 @@ class ClientController extends Controller
         DB::beginTransaction();
         try {
             $plan = Plan::findOrFail($validated['plan_id']);
-            $startDate = Carbon::parse($validated['start_date']);
+            $currentSub = $client->currentSubscription;
+            $pilotToDefinitive = $currentSub && $currentSub->plan && $currentSub->plan->is_pilot && !$plan->is_pilot;
+            $startDate = $pilotToDefinitive ? now()->startOfDay() : Carbon::parse($validated['start_date']);
             $endDate = $startDate->copy()->addMonth();
 
             // Crear suscripción
@@ -392,8 +410,20 @@ class ClientController extends Controller
                 ]);
             }
 
+            if ($pilotToDefinitive && $currentSub) {
+                $currentSub->update([
+                    'status' => 'inactive',
+                    'end_date' => now()->startOfDay(),
+                ]);
+
+                UsageRecord::where('client_id', $client->id)
+                    ->where('status', 'in_progress')
+                    ->where('subscription_id', $currentSub->id)
+                    ->update(['subscription_id' => $subscription->id]);
+            }
+
             // Crear registros de horas
-            if ($plan->cowork_hours > 0) {
+            if ($plan->is_pilot || $plan->cowork_hours > 0) {
                 HoursTracking::create([
                     'client_id' => $client->id,
                     'subscription_id' => $subscription->id,
@@ -404,7 +434,7 @@ class ClientController extends Controller
                 ]);
             }
 
-            if ($plan->meeting_room_hours > 0) {
+            if ($plan->is_pilot || $plan->meeting_room_hours > 0) {
                 HoursTracking::create([
                     'client_id' => $client->id,
                     'subscription_id' => $subscription->id,
@@ -443,7 +473,12 @@ class ClientController extends Controller
             $currentSub = $client->currentSubscription;
 
             // Fecha de inicio es el día después del fin del plan actual
-            $startDate = $currentSub ? $currentSub->end_date->copy()->addDay() : now();
+            $pilotToDefinitive = $currentSub && $currentSub->plan && $currentSub->plan->is_pilot && !$plan->is_pilot;
+            $startDate = $pilotToDefinitive
+                ? now()->startOfDay()
+                : ($currentSub && $currentSub->end_date
+                    ? $currentSub->end_date->copy()->addDay()
+                    : now());
             $endDate = $startDate->copy()->addMonth();
 
             // Crear nueva suscripción
@@ -459,8 +494,25 @@ class ClientController extends Controller
                 'auto_renew' => false,
             ]);
 
+            if ($pilotToDefinitive && $currentSub) {
+                $currentSub->update([
+                    'status' => 'inactive',
+                    'end_date' => now()->startOfDay(),
+                ]);
+
+                $client->update([
+                    'subscription_status' => 'active',
+                    'current_subscription_id' => $subscription->id,
+                ]);
+
+                UsageRecord::where('client_id', $client->id)
+                    ->where('status', 'in_progress')
+                    ->where('subscription_id', $currentSub->id)
+                    ->update(['subscription_id' => $subscription->id]);
+            }
+
             // Crear registros de horas para la nueva suscripción
-            if ($plan->cowork_hours > 0) {
+            if ($plan->is_pilot || $plan->cowork_hours > 0) {
                 HoursTracking::create([
                     'client_id' => $client->id,
                     'subscription_id' => $subscription->id,
@@ -471,7 +523,7 @@ class ClientController extends Controller
                 ]);
             }
 
-            if ($plan->meeting_room_hours > 0) {
+            if ($plan->is_pilot || $plan->meeting_room_hours > 0) {
                 HoursTracking::create([
                     'client_id' => $client->id,
                     'subscription_id' => $subscription->id,
@@ -484,7 +536,7 @@ class ClientController extends Controller
 
             DB::commit();
             return redirect()->route('admin.clientes.plan', $client)
-                ->with('success', 'Plan renovado exitosamente. Nueva fecha de fin: ' . $endDate->format('d/m/Y'));
+                ->with('success', 'Plan renovado exitosamente.' . ($endDate ? ' Nueva fecha de fin: ' . $endDate->format('d/m/Y') : ''));
 
         } catch (\Exception $e) {
             DB::rollBack();
@@ -508,7 +560,8 @@ class ClientController extends Controller
         try {
             $subscription = Subscription::findOrFail($validated['subscription_id']);
             $newPlan = Plan::findOrFail($validated['plan_id']);
-            $startDate = Carbon::parse($validated['start_date']);
+            $pilotToDefinitive = $subscription->plan && $subscription->plan->is_pilot && !$newPlan->is_pilot;
+            $startDate = $pilotToDefinitive ? now()->startOfDay() : Carbon::parse($validated['start_date']);
             $endDate = $startDate->copy()->addMonth();
 
             // Actualizar suscripción
@@ -519,6 +572,7 @@ class ClientController extends Controller
                 'monthly_price' => $newPlan->price,
                 'next_billing_date' => $endDate,
             ]);
+
 
             // Actualizar o crear registros de horas
             HoursTracking::updateOrCreate(
@@ -571,6 +625,7 @@ class ClientController extends Controller
 
             // Actualizar fecha de inicio a hoy
             $startDate = now();
+            $subscription->load('plan');
             $endDate = $startDate->copy()->addMonth();
 
             $subscription->update([
@@ -593,6 +648,76 @@ class ClientController extends Controller
             DB::rollBack();
             return redirect()->back()
                 ->with('error', 'Error al iniciar plan: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Recalcular hours_tracking desde los registros del plan.
+     */
+    public function recalcularHorasTracking(Request $request, Client $client)
+    {
+        $validated = $request->validate([
+            'subscription_id' => 'required|exists:subscriptions,id',
+        ]);
+
+        $subscription = Subscription::with('plan')
+            ->where('id', $validated['subscription_id'])
+            ->where('client_id', $client->id)
+            ->first();
+
+        if (!$subscription) {
+            abort(404);
+        }
+
+        DB::beginTransaction();
+        try {
+            $records = UsageRecord::where('subscription_id', $subscription->id)
+                ->whereIn('service_type', ['cowork', 'meeting_room'])
+                ->whereNotNull('check_out')
+                ->get(['service_type', 'check_in', 'check_out']);
+
+            $totals = [
+                'cowork' => 0,
+                'meeting_room' => 0,
+            ];
+
+            foreach ($records as $record) {
+                $hours = $record->check_in->diffInMinutes($record->check_out) / 60;
+                $totals[$record->service_type] += $hours;
+            }
+
+            $coworkTracking = HoursTracking::updateOrCreate(
+                [
+                    'subscription_id' => $subscription->id,
+                    'service_type' => 'cowork',
+                ],
+                [
+                    'client_id' => $client->id,
+                    'hours_used' => $totals['cowork'],
+                    'total_hours_available' => $subscription->plan->cowork_hours ?? 0,
+                    'last_updated' => now(),
+                ]
+            );
+
+            $salaTracking = HoursTracking::updateOrCreate(
+                [
+                    'subscription_id' => $subscription->id,
+                    'service_type' => 'meeting_room',
+                ],
+                [
+                    'client_id' => $client->id,
+                    'hours_used' => $totals['meeting_room'],
+                    'total_hours_available' => $subscription->plan->meeting_room_hours ?? 0,
+                    'last_updated' => now(),
+                ]
+            );
+
+            DB::commit();
+            return redirect()->route('admin.clientes.plan', $client)
+                ->with('success', 'Horas recalculadas correctamente.');
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()->with('error', 'Error al recalcular: ' . $e->getMessage());
         }
     }
 
@@ -667,12 +792,12 @@ class ClientController extends Controller
         if ($servicioActivo) {
             $plan = $master->currentSubscription->plan;
 
-            if ($servicioActivo->service_type === 'cowork' && $plan->cowork_hours <= 0) {
+            if (!$plan->is_pilot && $servicioActivo->service_type === 'cowork' && $plan->cowork_hours <= 0) {
                 return redirect()->back()
                     ->with('error', 'No se puede vincular: ' . $guest->full_name . ' está usando cowork pero el plan "' . $plan->name . '" NO incluye horas de cowork.');
             }
 
-            if ($servicioActivo->service_type === 'meeting_room' && $plan->meeting_room_hours <= 0) {
+            if (!$plan->is_pilot && $servicioActivo->service_type === 'meeting_room' && $plan->meeting_room_hours <= 0) {
                 return redirect()->back()
                     ->with('error', 'No se puede vincular: ' . $guest->full_name . ' está usando sala de reuniones pero el plan "' . $plan->name . '" NO incluye horas de sala.');
             }
@@ -763,9 +888,9 @@ class ClientController extends Controller
                 foreach ($registrosCompletados as $registro) {
                     $nuevoSubscriptionId = null;
 
-                    if ($registro->service_type === 'cowork' && $planDetails->cowork_hours > 0) {
+                    if ($registro->service_type === 'cowork' && ($planDetails->is_pilot || $planDetails->cowork_hours > 0)) {
                         $nuevoSubscriptionId = $planPropio->id;
-                    } elseif ($registro->service_type === 'meeting_room' && $planDetails->meeting_room_hours > 0) {
+                    } elseif ($registro->service_type === 'meeting_room' && ($planDetails->is_pilot || $planDetails->meeting_room_hours > 0)) {
                         $nuevoSubscriptionId = $planPropio->id;
                     } elseif ($registro->service_type === 'print') {
                         $nuevoSubscriptionId = $planPropio->id;
@@ -809,13 +934,24 @@ class ClientController extends Controller
         // Cargar el plan de la suscripción
         $subscription->load('plan');
 
-        $registros = UsageRecord::with('client')
-            ->where('subscription_id', $subscription->id)
-            ->orderBy('check_in', 'desc')
-            ->paginate(50);
+        $highlightClientId = null;
+        if ($client->invited_by_client_id && $subscription->client_id === $client->invited_by_client_id) {
+            $highlightClientId = $client->id;
+        }
+
+        $registrosQuery = UsageRecord::with('client')
+            ->where('subscription_id', $subscription->id);
+
+        $registros = $registrosQuery->orderBy('check_in', 'desc')->paginate(50);
+
+        $clientSubscriptions = $client->subscriptions()
+            ->with('plan')
+            ->orderBy('start_date', 'desc')
+            ->get();
 
         // Obtener todos los registros para cálculos (sin paginación)
-        $todosRegistros = UsageRecord::where('subscription_id', $subscription->id)->get();
+        $todosRegistrosQuery = UsageRecord::where('subscription_id', $subscription->id);
+        $todosRegistros = $todosRegistrosQuery->get();
 
         // Calcular horas usadas de cowork
         $horasCoworkUsadas = 0;
@@ -855,6 +991,8 @@ class ClientController extends Controller
             'subscription',
             'registros',
             'todosRegistros',
+            'clientSubscriptions',
+            'highlightClientId',
             'horasCoworkUsadas',
             'horasSalaUsadas',
             'horasCoworkContratadas',
@@ -869,29 +1007,78 @@ class ClientController extends Controller
         ));
     }
 
-    public function exportDetalleRegistroExcel(Client $client, Subscription $subscription)
+    /**
+     * Actualizar fechas de inicio y fin del plan desde detalle de registro.
+     */
+    public function actualizarFechasPlan(Request $request, Client $client, Subscription $subscription)
     {
-        if ($subscription->client_id !== $client->id) {
+        if ($subscription->client_id !== $client->id && $subscription->client_id !== $client->invited_by_client_id) {
             abort(404);
         }
 
+        $validated = $request->validate([
+            'start_date' => 'required|date',
+            'end_date' => 'nullable|date|after_or_equal:start_date',
+        ]);
+
+        $startDate = Carbon::parse($validated['start_date'])->startOfDay();
+        $endDate = $validated['end_date'] ? Carbon::parse($validated['end_date'])->startOfDay() : null;
+
+        $subscription->update([
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'next_billing_date' => $endDate,
+        ]);
+
+        if ($client->current_subscription_id === $subscription->id) {
+            $isActive = $startDate->lte(now()) && (!$endDate || $endDate->gte(now()->startOfDay()));
+            $client->update([
+                'subscription_status' => $isActive ? 'active' : 'expired',
+            ]);
+        }
+
+        return redirect()->route('admin.clientes.detalleRegistro', [$client, $subscription])
+            ->with('success', 'Fechas del plan actualizadas correctamente.');
+    }
+
+    public function exportDetalleRegistroExcel(Client $client, Subscription $subscription)
+    {
+        if ($subscription->client_id !== $client->id && $subscription->client_id !== $client->invited_by_client_id) {
+            abort(404);
+        }
+
+        $clientId = null;
+        if ($client->invited_by_client_id && $subscription->client_id === $client->invited_by_client_id) {
+            $clientId = $client->id;
+        }
+
         return Excel::download(
-            new DetalleRegistroExport($subscription),
+            new DetalleRegistroExport($subscription, $clientId),
             'registro-' . $subscription->id . '.xlsx'
         );
     }
 
     public function exportDetalleRegistroPdf(Client $client, Subscription $subscription)
     {
-        if ($subscription->client_id !== $client->id) {
+        if ($subscription->client_id !== $client->id && $subscription->client_id !== $client->invited_by_client_id) {
             abort(404);
         }
 
         $subscription->load('plan');
-        $registros = UsageRecord::with('client')
+        $filterClientId = null;
+        if ($client->invited_by_client_id && $subscription->client_id === $client->invited_by_client_id) {
+            $filterClientId = $client->id;
+        }
+
+        $registrosQuery = UsageRecord::with('client')
             ->where('subscription_id', $subscription->id)
-            ->orderBy('check_in', 'desc')
-            ->get();
+            ->orderBy('check_in', 'desc');
+
+        if ($filterClientId) {
+            $registrosQuery->where('client_id', $filterClientId);
+        }
+
+        $registros = $registrosQuery->get();
 
         $horasCoworkUsadas = 0;
         foreach ($registros->where('service_type', 'cowork') as $reg) {
@@ -949,5 +1136,132 @@ class ClientController extends Controller
         $usageRecord->delete();
 
         return redirect()->back()->with('success', 'Registro eliminado exitosamente.');
+    }
+
+    /**
+     * Actualizar un registro de uso
+     */
+    public function actualizarRegistro(Request $request, UsageRecord $usageRecord)
+    {
+        $validated = $request->validate([
+            'check_in_date' => 'required|date',
+            'check_in_time' => 'required|date_format:H:i',
+            'check_out_date' => 'nullable|date',
+            'check_out_time' => 'nullable|date_format:H:i',
+            'service_type' => 'required|in:cowork,meeting_room',
+            'plan_option' => 'required|in:keep,link,remove,move',
+            'new_subscription_id' => 'nullable|exists:subscriptions,id',
+            'move_subscription_id' => 'nullable|exists:subscriptions,id',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            // Guardar la duración anterior para recalcular horas tracking
+            $oldCheckIn = $usageRecord->check_in;
+            $oldCheckOut = $usageRecord->check_out;
+            $oldServiceType = $usageRecord->service_type;
+            $oldSubscriptionId = $usageRecord->subscription_id;
+
+            // Calcular las nuevas fechas combinando fecha y horas
+            $checkInDateTime = Carbon::parse($validated['check_in_date'] . ' ' . $validated['check_in_time']);
+
+            $checkOutDateTime = null;
+            if ($validated['check_out_date'] && $validated['check_out_time']) {
+                $checkOutDateTime = Carbon::parse($validated['check_out_date'] . ' ' . $validated['check_out_time']);
+
+                // Validar que checkout sea después de checkin
+                if ($checkOutDateTime->lte($checkInDateTime)) {
+                    return redirect()->back()
+                        ->withInput()
+                        ->with('error', 'La fecha y hora de salida debe ser posterior a la fecha y hora de entrada.');
+                }
+            }
+
+            // Actualizar subscription_id según la opción seleccionada
+            $newSubscriptionId = $oldSubscriptionId;
+
+            if ($validated['plan_option'] === 'remove') {
+                $newSubscriptionId = null;
+            } elseif ($validated['plan_option'] === 'link') {
+                if (!$validated['new_subscription_id']) {
+                    return redirect()->back()->with('error', 'Debe seleccionar un cliente con plan para vincular.');
+                }
+                $newSubscriptionId = $validated['new_subscription_id'];
+            } elseif ($validated['plan_option'] === 'move') {
+                if (!$validated['move_subscription_id']) {
+                    return redirect()->back()->with('error', 'Debe seleccionar un plan del cliente.');
+                }
+
+                $targetSubscription = Subscription::where('id', $validated['move_subscription_id'])
+                    ->where('client_id', $usageRecord->client_id)
+                    ->first();
+
+                if (!$targetSubscription) {
+                    return redirect()->back()->with('error', 'El plan seleccionado no pertenece a este cliente.');
+                }
+
+                $checkDate = $checkInDateTime->toDateString();
+                $validWindow = $targetSubscription->start_date->toDateString() <= $checkDate
+                    && (!$targetSubscription->end_date || $targetSubscription->end_date->toDateString() >= $checkDate);
+
+                if (!$validWindow) {
+                    return redirect()->back()->with('error', 'El plan seleccionado no esta vigente para la fecha de entrada.');
+                }
+
+                $newSubscriptionId = $targetSubscription->id;
+            }
+            // Si es 'keep', mantiene el valor actual ($oldSubscriptionId)
+
+            // Actualizar el registro
+            $usageRecord->update([
+                'check_in' => $checkInDateTime,
+                'check_out' => $checkOutDateTime,
+                'service_type' => $validated['service_type'],
+                'subscription_id' => $newSubscriptionId,
+                'status' => $checkOutDateTime ? 'completed' : 'in_progress',
+            ]);
+
+            // Recalcular horas en hours_tracking
+            // Primero, restar las horas antiguas si había un plan vinculado
+            if ($oldSubscriptionId && $oldCheckOut && in_array($oldServiceType, ['cowork', 'meeting_room'])) {
+                $oldDuration = $oldCheckIn->diffInMinutes($oldCheckOut) / 60;
+
+                $oldTracking = HoursTracking::where('subscription_id', $oldSubscriptionId)
+                    ->where('service_type', $oldServiceType)
+                    ->first();
+
+                if ($oldTracking) {
+                    $oldTracking->decrement('hours_used', $oldDuration);
+                    $oldTracking->update(['last_updated' => now()]);
+                }
+            }
+
+            // Luego, sumar las nuevas horas si hay un plan vinculado
+            if ($newSubscriptionId && $checkOutDateTime && in_array($validated['service_type'], ['cowork', 'meeting_room'])) {
+                $newDuration = $checkInDateTime->diffInMinutes($checkOutDateTime) / 60;
+
+                $newTracking = HoursTracking::firstOrCreate(
+                    [
+                        'subscription_id' => $newSubscriptionId,
+                        'service_type' => $validated['service_type'],
+                    ],
+                    [
+                        'client_id' => $usageRecord->client_id,
+                        'hours_used' => 0,
+                        'total_hours_available' => 0, // Se actualizará según el plan
+                    ]
+                );
+
+                $newTracking->increment('hours_used', $newDuration);
+                $newTracking->update(['last_updated' => now()]);
+            }
+
+            DB::commit();
+            return redirect()->back()->with('success', 'Registro actualizado exitosamente.');
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()->with('error', 'Error al actualizar: ' . $e->getMessage());
+        }
     }
 }

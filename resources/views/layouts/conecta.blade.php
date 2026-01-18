@@ -209,6 +209,11 @@
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {{ request()->routeIs('admin.registro.pendientes') ? 'active' : '' }}" href="{{ route('admin.registro.pendientes') }}">
+                                <i class="bi bi-exclamation-triangle d-lg-none me-2"></i>Pendientes
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link {{ request()->routeIs('admin.diario') ? 'active' : '' }}" href="{{ route('admin.diario', ['fecha' => date('Y-m-d')]) }}">
                                 <i class="bi bi-calendar-day d-lg-none me-2"></i>Diario
                             </a>
@@ -233,11 +238,11 @@
                                 <i class="bi bi-bar-chart d-lg-none me-2"></i>Reportes
                             </a>
                         </li>
-                        <li class="nav-item">
+                       <li class="nav-item">
                             <a class="nav-link {{ request()->routeIs('admin.calendario.*') ? 'active' : '' }}" href="{{ route('admin.calendario.index') }}">
                                 <i class="bi bi-calendar3 d-lg-none me-2"></i>Calendario
                             </a>
-                        </li>
+                        </li> 
                     @else
                         <li class="nav-item">
                             <a class="nav-link {{ request()->routeIs('regular.registro.*') ? 'active' : '' }}" href="{{ route('regular.registro.index') }}">
@@ -263,32 +268,28 @@
                 </ul>
 
                 {{-- Menu de usuario a la derecha --}}
-                <ul class="navbar-nav ms-auto">
-                    <li class="nav-item dropdown user-dropdown">
-                        <a class="nav-link dropdown-toggle d-flex align-items-center" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <ul class="navbar-nav ms-auto align-items-center">
+                    <li class="nav-item me-2">
+                        <span class="nav-link d-flex align-items-center">
                             <i class="bi bi-person-circle me-2 fs-5"></i>
                             <span>{{ auth()->user()->name }}</span>
+                        </span>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ route('profile.edit') }}" title="Perfil">
+                            <i class="bi bi-gear fs-5"></i>
                         </a>
-                        <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
-                            <li>
-                                <a class="dropdown-item" href="{{ route('profile.edit') }}">
-                                    <i class="bi bi-gear me-2"></i>Perfil
-                                </a>
-                            </li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li>
-                                <a class="dropdown-item text-danger" href="{{ route('logout') }}"
-                                   onclick="event.preventDefault(); document.getElementById('logout-form').submit();">
-                                    <i class="bi bi-box-arrow-right me-2"></i>Cerrar Sesion
-                                </a>
-                            </li>
-                        </ul>
+                    </li>
+                    <li class="nav-item">
+                        <form method="POST" action="{{ route('logout') }}" class="d-inline">
+                            @csrf
+                            <button type="submit" class="btn btn-link nav-link text-danger p-0 px-2" title="Cerrar Sesion">
+                                <i class="bi bi-box-arrow-right fs-5"></i>
+                            </button>
+                        </form>
                     </li>
                 </ul>
 
-                <form id="logout-form" action="{{ route('logout') }}" method="POST" class="d-none">
-                    @csrf
-                </form>
             </div>
         </div>
     </nav>

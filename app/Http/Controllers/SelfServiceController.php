@@ -12,7 +12,7 @@ class SelfServiceController extends Controller
 {
     public function index(Request $request)
     {
-        $doc = trim((string) $request->get('doc', ''));
+        $doc = preg_replace('/\D+/', '', (string) $request->get('doc', ''));
         $spaceKey = $request->get('space');
         $year = (int) $request->get('year', date('Y'));
         $month = (int) $request->get('month', date('m'));
@@ -24,29 +24,34 @@ class SelfServiceController extends Controller
             'cowork' => 0,
             'meeting_room' => 0,
         ];
+        $isPilotPlan = false;
         $spaces = $this->spaces();
         $selectedSpace = null;
         $calendarDays = [];
         $reservedByDay = [];
         $reservedTimesByDay = [];
         $selectedDate = $request->get('date');
+        $clientReservations = collect();
 
         if ($doc !== '') {
-            $client = Client::with(['currentSubscription.plan'])->where('document_number', $doc)->first();
+            $client = $this->resolveClientByDocument($doc);
 
             if (!$client) {
                 $clientNotFound = true;
             } else {
-                $subscription = $client->currentSubscription;
-                if ($subscription
-                    && $subscription->status === 'active'
-                    && $subscription->start_date->lte(today())
-                    && $subscription->end_date->gte(today())
-                ) {
-                    $planActive = true;
-                }
+                $subscription = $this->resolveActiveSubscription($client);
+                $planActive = (bool) $subscription;
+
+                $clientReservations = Event::where('type', 'reservation')
+                    ->where('client_id', $client->id)
+                    ->where('status', '!=', 'cancelled')
+                    ->orderBy('start_date', 'desc')
+                    ->orderBy('start_time', 'desc')
+                    ->take(5)
+                    ->get();
 
                 if ($planActive) {
+                    $isPilotPlan = $subscription->plan && $subscription->plan->is_pilot;
                     $coworkTracking = HoursTracking::where('subscription_id', $subscription->id)
                         ->where('service_type', 'cowork')
                         ->first();
@@ -54,18 +59,23 @@ class SelfServiceController extends Controller
                         ->where('service_type', 'meeting_room')
                         ->first();
 
-                    $hoursAvailable['cowork'] = $coworkTracking
-                        ? max(0, (float) $coworkTracking->total_hours_available - (float) $coworkTracking->hours_used)
-                        : 0;
-                    $hoursAvailable['meeting_room'] = $salaTracking
-                        ? max(0, (float) $salaTracking->total_hours_available - (float) $salaTracking->hours_used)
-                        : 0;
+                    if ($isPilotPlan) {
+                        $hoursAvailable['cowork'] = null;
+                        $hoursAvailable['meeting_room'] = null;
+                    } else {
+                        $hoursAvailable['cowork'] = $coworkTracking
+                            ? max(0, (float) $coworkTracking->total_hours_available - (float) $coworkTracking->hours_used)
+                            : 0;
+                        $hoursAvailable['meeting_room'] = $salaTracking
+                            ? max(0, (float) $salaTracking->total_hours_available - (float) $salaTracking->hours_used)
+                            : 0;
+                    }
                 }
 
                 if ($spaceKey && isset($spaces[$spaceKey])) {
                     $space = $spaces[$spaceKey];
-                    $canReserveCowork = $planActive && $hoursAvailable['cowork'] > 0;
-                    $canReserveSala = $planActive && $hoursAvailable['meeting_room'] > 0;
+                    $canReserveCowork = $planActive && ($isPilotPlan || $hoursAvailable['cowork'] > 0);
+                    $canReserveSala = $planActive && ($isPilotPlan || $hoursAvailable['meeting_room'] > 0);
 
                     if (($space['service_type'] === 'cowork' && $canReserveCowork)
                         || ($space['service_type'] === 'meeting_room' && $canReserveSala)
@@ -82,7 +92,7 @@ class SelfServiceController extends Controller
                             ->where('location', $spaceKey)
                             ->whereBetween('start_date', [$monthStart, $monthEnd])
                             ->where('status', '!=', 'cancelled')
-                            ->get(['start_date', 'start_time']);
+                            ->get(['start_date', 'start_time', 'end_time']);
 
                         foreach ($reservas as $reserva) {
                             $dateKey = Carbon::parse($reserva->start_date)->format('Y-m-d');
@@ -91,7 +101,11 @@ class SelfServiceController extends Controller
                                 $reservedTimesByDay[$dateKey] = [];
                             }
                             if ($reserva->start_time) {
-                                $reservedTimesByDay[$dateKey][] = $reserva->start_time;
+                                $range = $reserva->start_time;
+                                if ($reserva->end_time) {
+                                    $range .= ' - ' . $reserva->end_time;
+                                }
+                                $reservedTimesByDay[$dateKey][] = $range;
                             }
                         }
                     }
@@ -110,6 +124,7 @@ class SelfServiceController extends Controller
             'calendarDays' => $calendarDays,
             'reservedByDay' => $reservedByDay,
             'reservedTimesByDay' => $reservedTimesByDay,
+            'clientReservations' => $clientReservations,
             'selectedDate' => $selectedDate,
             'year' => $year,
             'month' => $month,
@@ -124,9 +139,10 @@ class SelfServiceController extends Controller
             'date' => 'required|date',
             'start_time' => 'required|string',
             'end_time' => 'required|string',
+            'email' => 'nullable|email|max:255',
         ]);
 
-        $doc = trim($validated['doc']);
+        $doc = preg_replace('/\D+/', '', $validated['doc']);
         $spaceKey = $validated['space'];
         $date = Carbon::parse($validated['date'])->startOfDay();
         $startTime = $validated['start_time'];
@@ -137,16 +153,17 @@ class SelfServiceController extends Controller
             return back()->with('error', 'Espacio no valido.');
         }
 
-        $client = Client::with(['currentSubscription.plan'])->where('document_number', $doc)->first();
+        $client = $this->resolveClientByDocument($doc);
         if (!$client) {
             return back()->with('error', 'Cliente no encontrado.');
         }
 
-        $subscription = $client->currentSubscription;
-        $planActive = $subscription
-            && $subscription->status === 'active'
-            && $subscription->start_date->lte(today())
-            && $subscription->end_date->gte(today());
+        if (!empty($validated['email']) && $client->email !== $validated['email']) {
+            $client->update(['email' => $validated['email']]);
+        }
+
+        $subscription = $this->resolveActiveSubscription($client);
+        $planActive = (bool) $subscription;
 
         if (!$planActive) {
             return back()->with('error', 'El cliente no tiene un plan activo.');
@@ -156,11 +173,12 @@ class SelfServiceController extends Controller
         $tracking = HoursTracking::where('subscription_id', $subscription->id)
             ->where('service_type', $space['service_type'])
             ->first();
+        $isPilotPlan = $subscription->plan && $subscription->plan->is_pilot;
         $availableHours = $tracking
             ? max(0, (float) $tracking->total_hours_available - (float) $tracking->hours_used)
             : 0;
 
-        if ($availableHours <= 0) {
+        if (!$isPilotPlan && $availableHours <= 0) {
             return back()->with('error', 'No hay horas disponibles para este servicio.');
         }
 
@@ -231,6 +249,62 @@ class SelfServiceController extends Controller
             'sala-reuniones-1' => ['key' => 'sala-reuniones-1', 'label' => 'Sala de reuniones 1', 'service_type' => 'meeting_room'],
             'sala-reuniones-2' => ['key' => 'sala-reuniones-2', 'label' => 'Sala de reuniones 2', 'service_type' => 'meeting_room'],
         ];
+    }
+
+    private function resolveActiveSubscription(Client $client)
+    {
+        $subscription = $client->currentSubscription;
+
+        if ($subscription
+            && $subscription->start_date->lte(today())
+            && ($subscription->end_date ? $subscription->end_date->gte(today()) : true)
+        ) {
+            return $subscription->loadMissing('plan');
+        }
+
+        return $client->subscriptions()
+            ->with('plan')
+            ->whereDate('start_date', '<=', today())
+            ->where(function ($query) {
+                $query->whereDate('end_date', '>=', today())
+                    ->orWhereNull('end_date');
+            })
+            ->orderByRaw("status = 'active' desc")
+            ->orderBy('start_date', 'desc')
+            ->first();
+    }
+
+    private function resolveClientByDocument(string $doc): ?Client
+    {
+        if ($doc === '') {
+            return null;
+        }
+
+        $candidates = Client::with(['currentSubscription.plan', 'subscriptions.plan'])
+            ->where('document_number', $doc)
+            ->orWhere('document_number', 'like', $doc . '%')
+            ->limit(10)
+            ->get();
+
+        if ($candidates->isEmpty()) {
+            return null;
+        }
+
+        $withActivePlan = $candidates->first(function ($client) {
+            return (bool) $this->resolveActiveSubscription($client);
+        });
+        if ($withActivePlan) {
+            return $withActivePlan;
+        }
+
+        $exact = $candidates->firstWhere('document_number', $doc);
+        if ($exact) {
+            return $exact;
+        }
+
+        return $candidates->sortByDesc(function ($client) {
+            return strlen($client->document_number ?? '');
+        })->first();
     }
 
     private function generateCalendarDays(Carbon $date): array

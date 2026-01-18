@@ -73,6 +73,34 @@
                 </div>
             </div>
 
+            @if($clientReservations->count() > 0)
+                <div class="card border-0 shadow-sm mb-4">
+                    <div class="card-body">
+                        <h5 class="mb-3"><i class="bi bi-bookmark-check me-2"></i>Tus reservas recientes</h5>
+                        <div class="list-group">
+                            @foreach($clientReservations as $reserva)
+                                @php
+                                    $space = $spaces[$reserva->location] ?? null;
+                                    $label = $space ? $space['label'] : ($reserva->location ?? 'Espacio');
+                                @endphp
+                                <div class="list-group-item d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <div class="fw-semibold">{{ $label }}</div>
+                                        <div class="text-muted small">
+                                            {{ $reserva->start_date->format('d/m/Y') }}
+                                            @if($reserva->start_time)
+                                                · {{ $reserva->start_time }} - {{ $reserva->end_time ?? '' }}
+                                            @endif
+                                        </div>
+                                    </div>
+                                    <span class="badge bg-success">Reservado</span>
+                                </div>
+                            @endforeach
+                        </div>
+                    </div>
+                </div>
+            @endif
+
             <div class="card border-0 shadow-sm mb-4">
                 <div class="card-body">
                     <h5 class="mb-3"><i class="bi bi-grid-3x3-gap me-2"></i>Selecciona un espacio</h5>
@@ -156,6 +184,7 @@
                                     $dateKey = $day['date']->format('Y-m-d');
                                     $isPast = $day['date']->lt(today());
                                     $isDisabled = !$day['isCurrentMonth'] || $isPast;
+                                    $times = $reservedTimesByDay[$dateKey] ?? [];
                                 @endphp
                                 <div class="calendar-cell {{ $day['isCurrentMonth'] ? '' : 'text-muted' }} {{ $day['isToday'] ? 'today' : '' }} {{ $selectedDate === $dateKey ? 'selected' : '' }}">
                                     <div class="small mb-1">{{ $day['date']->day }}</div>
@@ -169,6 +198,11 @@
                                         </button>
                                         @if(($reservedByDay[$dateKey] ?? 0) > 0)
                                             <div class="small text-muted mt-1">{{ $reservedByDay[$dateKey] }} reservas</div>
+                                        @endif
+                                        @if($selectedSpace['service_type'] === 'meeting_room' && !empty($times))
+                                            <div class="small text-muted mt-1">
+                                                Horas: {{ implode(', ', $times) }}
+                                            </div>
                                         @endif
                                     @else
                                         <span class="text-muted small">-</span>
@@ -247,6 +281,12 @@
                             <label class="form-label">Hora fin</label>
                             <input type="time" class="form-control" name="end_time" id="reservaFin" required step="300" min="09:00" max="21:00">
                         </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <label class="form-label">Correo electronico (opcional)</label>
+                        <input type="email" class="form-control" name="email" value="{{ $client->email ?? '' }}" placeholder="nombre@correo.com">
+                        <div class="form-text">Lo usaremos para enviarte confirmaciones y agregar eventos a tu calendario.</div>
                     </div>
 
                     <div class="alert alert-warning mt-3 py-2 d-none" id="reservaError">

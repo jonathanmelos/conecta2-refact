@@ -47,7 +47,10 @@
                                     <td>
                                         <strong>{{ $client->document_number }}</strong>
                                     </td>
-                                    <td>{{ $client->first_name }}</td>
+                                    <td>
+                                        {{ $client->first_name }}
+                                        @include('components.badges.invitado', ['client' => $client])
+                                    </td>
                                     <td>{{ $client->last_name ?? '-' }}</td>
                                     <td>{{ $client->phone ?? '-' }}</td>
                                     <td>

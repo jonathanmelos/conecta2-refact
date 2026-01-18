@@ -14,9 +14,14 @@
                             <small class="opacity-75">Gestiona los eventos del coworking</small>
                         </div>
                     </div>
-                    <a href="{{ route('admin.calendario.create') }}" class="btn btn-light">
-                        <i class="bi bi-plus-circle me-1"></i> Nuevo Evento
-                    </a>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-light" data-bs-toggle="modal" data-bs-target="#modalWhatsappRegistro">
+                            <i class="bi bi-whatsapp me-1"></i> Enviar WhatsApp
+                        </button>
+                        <a href="{{ route('admin.calendario.create') }}" class="btn btn-light">
+                            <i class="bi bi-plus-circle me-1"></i> Nuevo Evento
+                        </a>
+                    </div>
                 </div>
             </div>
 
@@ -234,6 +239,48 @@
     </div>
 </div>
 
+<div class="modal fade" id="modalWhatsappRegistro" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title">Invitar por WhatsApp</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="whatsapp_client_search" class="form-label">Cliente</label>
+                    <input type="text"
+                           class="form-control"
+                           id="whatsapp_client_search"
+                           placeholder="Buscar por nombre, apellido o cédula"
+                           autocomplete="off">
+                    <input type="hidden" id="whatsapp_client_id" value="">
+                    <div id="whatsapp_client_results" class="list-group mt-2 d-none"></div>
+                </div>
+                <div class="mb-3">
+                    <label for="whatsapp_phone" class="form-label">Número de WhatsApp</label>
+                    <input type="text"
+                           class="form-control"
+                           id="whatsapp_phone"
+                           placeholder="Ej: 593999999999"
+                           autocomplete="off">
+                    <small class="text-muted">Usa formato internacional sin símbolos ni espacios.</small>
+                </div>
+                <div class="mb-3">
+                    <label for="whatsapp_message" class="form-label">Mensaje</label>
+                    <textarea class="form-control" id="whatsapp_message" rows="4">Te comparto este link para que reserves tu espacio en Conecta Coworking, elige el día que prefieras: {{ url('/autoservicio') }}</textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-success" id="whatsapp_send_btn">
+                    <i class="bi bi-whatsapp me-1"></i> Enviar WhatsApp
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 @endsection
 
 @push('styles')
@@ -319,6 +366,122 @@
 
         document.querySelector('#dayEventsModal .modal-title').textContent =
             'Eventos del ' + new Date(date).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
+    });
+
+    const searchInput = document.getElementById('whatsapp_client_search');
+    const resultsBox = document.getElementById('whatsapp_client_results');
+    const phoneInput = document.getElementById('whatsapp_phone');
+    const clientIdInput = document.getElementById('whatsapp_client_id');
+    const messageInput = document.getElementById('whatsapp_message');
+
+    let searchTimer = null;
+
+    function clearResults() {
+        resultsBox.innerHTML = '';
+        resultsBox.classList.add('d-none');
+    }
+
+    function renderResults(items) {
+        resultsBox.innerHTML = '';
+        if (!items.length) {
+            clearResults();
+            return;
+        }
+
+        items.forEach(item => {
+            const option = document.createElement('button');
+            option.type = 'button';
+            option.className = 'list-group-item list-group-item-action';
+            option.dataset.clientId = item.id;
+            option.dataset.phone = item.phone || '';
+            option.textContent = `${item.full_name} (${item.document_number})`;
+            option.addEventListener('click', () => {
+                searchInput.value = option.textContent;
+                clientIdInput.value = item.id;
+                if (item.phone) {
+                    phoneInput.value = item.phone;
+                }
+                clearResults();
+            });
+            resultsBox.appendChild(option);
+        });
+
+        resultsBox.classList.remove('d-none');
+    }
+
+    searchInput?.addEventListener('input', () => {
+        clientIdInput.value = '';
+        if (searchTimer) {
+            clearTimeout(searchTimer);
+        }
+
+        const term = searchInput.value.trim();
+        if (term.length < 2) {
+            clearResults();
+            return;
+        }
+
+        searchTimer = setTimeout(() => {
+            fetch(`{{ route('admin.calendario.buscarClientes') }}?term=${encodeURIComponent(term)}`)
+                .then(response => response.json())
+                .then(renderResults)
+                .catch(() => clearResults());
+        }, 250);
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!resultsBox.contains(event.target) && event.target !== searchInput) {
+            clearResults();
+        }
+    });
+
+    document.getElementById('whatsapp_send_btn')?.addEventListener('click', function() {
+        const rawPhone = phoneInput.value || '';
+        const phone = rawPhone.replace(/\D/g, '');
+        const name = searchInput.value.trim();
+        const message = messageInput.value || '';
+
+        if (!name) {
+            alert('Ingresa el nombre del cliente.');
+            searchInput.focus();
+            return;
+        }
+
+        if (!phone) {
+            alert('Ingresa un número de WhatsApp válido.');
+            phoneInput.focus();
+            return;
+        }
+
+        const modalEl = document.getElementById('modalWhatsappRegistro');
+        const modalInstance = modalEl ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
+
+        fetch(`{{ route('admin.calendario.guardarWhatsappContacto') }}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': '{{ csrf_token() }}',
+            },
+            body: JSON.stringify({
+                name: name,
+                phone: phone,
+                client_id: clientIdInput.value || null,
+            }),
+        }).then(() => {
+            const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+            window.open(url, '_blank', 'noopener');
+            if (modalInstance) {
+                modalInstance.hide();
+            }
+            setTimeout(() => window.location.reload(), 300);
+        }).catch(() => {
+            const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+            window.open(url, '_blank', 'noopener');
+            if (modalInstance) {
+                modalInstance.hide();
+            }
+            setTimeout(() => window.location.reload(), 300);
+        });
     });
 </script>
 @endpush
