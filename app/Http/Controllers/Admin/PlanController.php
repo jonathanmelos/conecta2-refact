@@ -11,6 +11,18 @@ class PlanController extends Controller
     public function index()
     {
         $plans = Plan::withCount('subscriptions')
+            ->withCount([
+                'subscriptions as ultra_children_count' => function ($query) {
+                    $query->where('is_ultra_custom', true);
+                },
+            ])
+            ->with([
+                'subscriptions' => function ($query) {
+                    $query->where('is_ultra_custom', true)
+                        ->with('client')
+                        ->latest();
+                },
+            ])
             ->orderBy('price')
             ->get();
 
@@ -30,6 +42,8 @@ class PlanController extends Controller
             'meeting_room_hours' => 'required|integer|min:0',
             'prints_included' => 'required|integer|min:0',
             'events_included' => 'required|integer|min:0',
+            'is_pilot' => 'nullable|boolean',
+            'is_ultra_custom' => 'nullable|boolean',
             'price' => 'required|numeric|min:0',
             'setup_fee' => 'nullable|numeric|min:0',
             'deposit_required' => 'nullable|numeric|min:0',
@@ -37,6 +51,21 @@ class PlanController extends Controller
             'description' => 'nullable|string',
         ]);
 
+        $validated['is_pilot'] = $request->boolean('is_pilot');
+        $validated['is_ultra_custom'] = $request->boolean('is_ultra_custom');
+        if ($validated['is_pilot']) {
+            $validated['cowork_hours'] = 0;
+            $validated['meeting_room_hours'] = 0;
+        }
+        if ($validated['is_ultra_custom']) {
+            $validated['cowork_hours'] = 0;
+            $validated['meeting_room_hours'] = 0;
+            $validated['prints_included'] = 0;
+            $validated['events_included'] = 0;
+        }
+        $validated['setup_fee'] = $validated['setup_fee'] ?? 0;
+        $validated['deposit_required'] = $validated['deposit_required'] ?? 0;
+        $validated['operational_cost'] = $validated['operational_cost'] ?? 0;
         $validated['is_active'] = true;
 
         Plan::create($validated);
@@ -58,6 +87,8 @@ class PlanController extends Controller
             'meeting_room_hours' => 'required|integer|min:0',
             'prints_included' => 'required|integer|min:0',
             'events_included' => 'required|integer|min:0',
+            'is_pilot' => 'nullable|boolean',
+            'is_ultra_custom' => 'nullable|boolean',
             'price' => 'required|numeric|min:0',
             'setup_fee' => 'nullable|numeric|min:0',
             'deposit_required' => 'nullable|numeric|min:0',
@@ -65,6 +96,21 @@ class PlanController extends Controller
             'description' => 'nullable|string',
         ]);
 
+        $validated['is_pilot'] = $request->boolean('is_pilot');
+        $validated['is_ultra_custom'] = $request->boolean('is_ultra_custom');
+        if ($validated['is_pilot']) {
+            $validated['cowork_hours'] = 0;
+            $validated['meeting_room_hours'] = 0;
+        }
+        if ($validated['is_ultra_custom']) {
+            $validated['cowork_hours'] = 0;
+            $validated['meeting_room_hours'] = 0;
+            $validated['prints_included'] = 0;
+            $validated['events_included'] = 0;
+        }
+        $validated['setup_fee'] = $validated['setup_fee'] ?? 0;
+        $validated['deposit_required'] = $validated['deposit_required'] ?? 0;
+        $validated['operational_cost'] = $validated['operational_cost'] ?? 0;
         $plan->update($validated);
 
         return redirect()->route('admin.planes.index')

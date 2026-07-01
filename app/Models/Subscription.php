@@ -23,6 +23,11 @@ class Subscription extends Model
         'billing_cycle',
         'next_billing_date',
         'auto_renew',
+        'is_ultra_custom',
+        'custom_cowork_hours',
+        'custom_meeting_room_hours',
+        'custom_prints_included',
+        'custom_events_included',
     ];
 
     protected $casts = [
@@ -35,6 +40,11 @@ class Subscription extends Model
         'discount_applied' => 'decimal:2',
         'total_paid' => 'decimal:2',
         'auto_renew' => 'boolean',
+        'is_ultra_custom' => 'boolean',
+        'custom_cowork_hours' => 'decimal:2',
+        'custom_meeting_room_hours' => 'decimal:2',
+        'custom_prints_included' => 'integer',
+        'custom_events_included' => 'integer',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
@@ -60,6 +70,11 @@ class Subscription extends Model
         return $this->hasMany(HoursTracking::class);
     }
 
+    public function members(): HasMany
+    {
+        return $this->hasMany(SubscriptionMember::class);
+    }
+
     public function invoices(): HasMany
     {
         return $this->hasMany(Invoice::class);
@@ -68,34 +83,92 @@ class Subscription extends Model
     // Accessors
     public function getIsActiveAttribute(): bool
     {
-        return $this->status === 'active' && $this->end_date >= now();
+        if ($this->status !== 'active') {
+            return false;
+        }
+
+        if (!$this->end_date) {
+            return $this->start_date <= now();
+        }
+
+        return $this->end_date >= now();
     }
 
     public function getIsExpiredAttribute(): bool
     {
+        if (!$this->end_date) {
+            return false;
+        }
+
         return $this->end_date < now();
     }
 
-    public function getDaysRemainingAttribute(): int
+    public function getDaysRemainingAttribute(): ?int
     {
+        if (!$this->end_date) {
+            return null;
+        }
+
         return now()->diffInDays($this->end_date, false);
+    }
+
+    public function getEffectiveCoworkHoursAttribute(): float
+    {
+        if ($this->is_ultra_custom && $this->custom_cowork_hours !== null) {
+            return (float) $this->custom_cowork_hours;
+        }
+
+        return (float) ($this->plan->cowork_hours ?? 0);
+    }
+
+    public function getEffectiveMeetingRoomHoursAttribute(): float
+    {
+        if ($this->is_ultra_custom && $this->custom_meeting_room_hours !== null) {
+            return (float) $this->custom_meeting_room_hours;
+        }
+
+        return (float) ($this->plan->meeting_room_hours ?? 0);
+    }
+
+    public function getEffectivePrintsIncludedAttribute(): int
+    {
+        if ($this->is_ultra_custom && $this->custom_prints_included !== null) {
+            return (int) $this->custom_prints_included;
+        }
+
+        return (int) ($this->plan->prints_included ?? 0);
+    }
+
+    public function getEffectiveEventsIncludedAttribute(): int
+    {
+        if ($this->is_ultra_custom && $this->custom_events_included !== null) {
+            return (int) $this->custom_events_included;
+        }
+
+        return (int) ($this->plan->events_included ?? 0);
     }
 
     // Scopes
     public function scopeActive($query)
     {
         return $query->where('status', 'active')
-            ->where('end_date', '>=', now());
+            ->whereDate('start_date', '<=', now())
+            ->where(function ($q) {
+                $q->where('end_date', '>=', now())
+                    ->orWhereNull('end_date');
+            });
     }
 
     public function scopeExpired($query)
     {
-        return $query->where('end_date', '<', now());
+        return $query->whereNotNull('end_date')
+            ->where('end_date', '<', now());
     }
 
     public function scopeExpiringSoon($query, $days = 7)
     {
         return $query->where('status', 'active')
+            ->whereNotNull('end_date')
             ->whereBetween('end_date', [now(), now()->addDays($days)]);
     }
 }

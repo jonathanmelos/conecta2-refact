@@ -23,6 +23,7 @@ class Client extends Model
         'current_subscription_id',
         'invited_by_client_id', // ✅ Agregar esta línea
         'notes',
+        'invitation_link',
     ];
 
     protected $casts = [
@@ -40,6 +41,11 @@ class Client extends Model
     public function subscriptions(): HasMany
     {
         return $this->hasMany(Subscription::class);
+    }
+
+    public function subscriptionMemberships(): HasMany
+    {
+        return $this->hasMany(SubscriptionMember::class);
     }
 
     public function usageRecords(): HasMany
@@ -103,6 +109,18 @@ class Client extends Model
     public function getHasActiveSubscriptionAttribute(): bool
     {
         return $this->subscription_status === 'active';
+    }
+
+    public function getWhatsappInvitationUrlAttribute(): string
+    {
+        $invitationLink = $this->invitation_link
+            ?: ('https://conectacowork.com/bienvenida?cliente=' . urlencode($this->full_name));
+
+        $message = 'Hola ' . $this->first_name . ', gracias por ser parte de Conecta Coworking. '
+            . 'Para mejorar nuestra convivencia te invitamos a revisar nuestras reglas de convivencia e informacion importante para ti. '
+            . 'Sigue este link: ' . $invitationLink;
+
+        return 'https://wa.me/?text=' . urlencode($message);
     }
 
     // Scopes

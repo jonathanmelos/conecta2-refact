@@ -51,6 +51,7 @@
                                 <th>Apellido</th>
                                 <th>Teléfono</th>
                                 <th>Estado</th>
+                                <th>Link de invitación</th>
                                 <th class="text-center" style="min-width: 280px;">Acciones</th>
                             </tr>
                         </thead>
@@ -64,9 +65,11 @@
                                     if ($tienePlan && $client->currentSubscription) {
                                         $hoy = now();
                                         $inicio = \Carbon\Carbon::parse($client->currentSubscription->start_date);
-                                        $fin = \Carbon\Carbon::parse($client->currentSubscription->end_date);
-                                        $planVigente = $hoy->between($inicio, $fin);
-                                        $planVencido = $hoy->gt($fin);
+                                        $fin = $client->currentSubscription->end_date
+                                            ? \Carbon\Carbon::parse($client->currentSubscription->end_date)
+                                            : null;
+                                        $planVigente = $fin ? $hoy->between($inicio, $fin) : $hoy->gte($inicio);
+                                        $planVencido = $fin ? $hoy->gt($fin) : false;
                                     }
 
                                     // Determinar clase de fila (solo amarillo para sin plan)
@@ -90,16 +93,23 @@
                                             @if($planVigente)
                                                 <span class="badge bg-success">
                                                     {{ $client->currentSubscription->plan->name ?? 'Plan Activo' }}
+                                                    {{ $client->currentSubscription->plan && $client->currentSubscription->plan->is_pilot ? ' (Piloto)' : '' }}
                                                 </span>
-                                                <br><small class="text-success">Vigente hasta {{ \Carbon\Carbon::parse($client->currentSubscription->end_date)->format('d/m/Y') }}</small>
+                                                <br><small class="text-success">
+                                                    Vigente hasta {{ $client->currentSubscription->end_date ? \Carbon\Carbon::parse($client->currentSubscription->end_date)->format('d/m/Y') : 'Sin vencimiento' }}
+                                                </small>
                                             @elseif($planVencido)
                                                 <span class="badge bg-danger">
                                                     {{ $client->currentSubscription->plan->name ?? 'Plan' }}
+                                                    {{ $client->currentSubscription->plan && $client->currentSubscription->plan->is_pilot ? ' (Piloto)' : '' }}
                                                 </span>
-                                                <br><small class="text-danger">Vencido {{ \Carbon\Carbon::parse($client->currentSubscription->end_date)->format('d/m/Y') }}</small>
+                                                <br><small class="text-danger">
+                                                    Vencido {{ $client->currentSubscription->end_date ? \Carbon\Carbon::parse($client->currentSubscription->end_date)->format('d/m/Y') : 'Sin vencimiento' }}
+                                                </small>
                                             @else
                                                 <span class="badge bg-info">
                                                     {{ $client->currentSubscription->plan->name ?? 'Plan' }}
+                                                    {{ $client->currentSubscription->plan && $client->currentSubscription->plan->is_pilot ? ' (Piloto)' : '' }}
                                                 </span>
                                                 <br><small class="text-info">Inicia {{ \Carbon\Carbon::parse($client->currentSubscription->start_date)->format('d/m/Y') }}</small>
                                             @endif
@@ -108,6 +118,20 @@
                                             @endif
                                         @else
                                             <span class="badge bg-warning text-dark">Sin Plan</span>
+                                        @endif
+                                    </td>
+                                    <td>
+                                        @if($client->invitation_link)
+                                            <div class="d-flex gap-1 flex-wrap">
+                                                <a href="{{ $client->invitation_link }}" target="_blank" class="btn btn-outline-primary btn-sm">
+                                                    Link
+                                                </a>
+                                                <a href="{{ $client->whatsapp_invitation_url }}" target="_blank" class="btn btn-outline-success btn-sm">
+                                                    WhatsApp
+                                                </a>
+                                            </div>
+                                        @else
+                                            <span class="text-muted">-</span>
                                         @endif
                                     </td>
                                     <td class="text-center">
@@ -152,7 +176,7 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="6" class="text-center text-muted py-4">
+                                    <td colspan="7" class="text-center text-muted py-4">
                                         No hay clientes registrados.
                                     </td>
                                 </tr>

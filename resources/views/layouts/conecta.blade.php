@@ -393,6 +393,17 @@
         });
     </script>
 
+    @if(session('whatsapp_open_url'))
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const whatsappUrl = @json(session('whatsapp_open_url'));
+            if (whatsappUrl) {
+                window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+            }
+        });
+    </script>
+    @endif
+
     @stack('scripts')
 </body>
 </html>

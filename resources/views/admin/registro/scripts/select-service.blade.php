@@ -26,6 +26,8 @@ function loadClientPlanInfo(clientData) {
     let salaDisabled = false;
     let coworkInfo = '';
     let salaInfo = '';
+    const coworkData = clientData.service_plans?.cowork || clientData.current_subscription || null;
+    const salaData = clientData.service_plans?.meeting_room || clientData.current_subscription || null;
     
     // ✅ SOLO verificar si el CLIENTE (no sus invitados) está usando servicio
     if (clientData.active_cowork_today) {
@@ -40,92 +42,90 @@ function loadClientPlanInfo(clientData) {
         coworkInfo = '<i class="bi bi-exclamation-triangle text-warning"></i> No puede usar cowork mientras está en sala';
     }
     
-    // Verificar plan y horas disponibles
-    if (clientData.current_subscription && clientData.current_subscription.plan) {
-        const plan = clientData.current_subscription.plan;
-        const sub = clientData.current_subscription;
-        
-        // Calcular horas usadas y disponibles
-        const coworkUsed = clientData.cowork_hours_used || 0;
-        const salaUsed = clientData.sala_hours_used || 0;
-        const coworkTotal = plan.cowork_hours || 0;
-        const salaTotal = plan.meeting_room_hours || 0;
-        const coworkAvailable = Math.max(0, coworkTotal - coworkUsed);
-        const salaAvailable = Math.max(0, salaTotal - salaUsed);
-        const coworkPercent = coworkTotal > 0 ? (coworkUsed / coworkTotal * 100) : 0;
-        const salaPercent = salaTotal > 0 ? (salaUsed / salaTotal * 100) : 0;
+    // Verificar plan y horas disponibles por servicio
+    if ((coworkData && coworkData.plan) || (salaData && salaData.plan)) {
+        const renderServicePlan = (label, data, serviceKey) => {
+            if (!data || data.status === 'billable' || !data.plan) {
+                return `<div class="alert alert-warning py-2 mb-2">${label}: pago por uso</div>`;
+            }
+
+            if (data.status === 'ambiguous') {
+                return `<div class="alert alert-danger py-2 mb-2">${label}: ${data.message || 'Seleccione un plan preferido'}</div>`;
+            }
+
+            const plan = data.plan;
+            const used = Number(data.hours_used || 0);
+            const total = serviceKey === 'cowork'
+                ? Number(plan.cowork_hours || data.hours_total || 0)
+                : Number(plan.meeting_room_hours || data.hours_total || 0);
+            const isPilot = !!plan.is_pilot;
+            const available = isPilot ? null : Math.max(0, total - used);
+            const percent = !isPilot && total > 0 ? (used / total * 100) : 0;
+            const barColor = serviceKey === 'cowork' ? 'bg-primary' : 'bg-info';
+
+            return `
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <small class="text-muted"><strong>${label}</strong></small>
+                        <span class="badge bg-success">Plan #${data.subscription_id}</span>
+                    </div>
+                    <div class="small mb-1">
+                        ${plan.name}${isPilot ? ' (Piloto)' : ''} · ${data.dates_label || ''}
+                        ${data.source === 'member_assignment' ? ' · asignado' : ''}
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <small class="text-muted">${used.toFixed(2)} / ${isPilot ? 'Ilimitadas' : total + ' hrs'}</small>
+                        <small class="text-success"><strong>${isPilot ? 'Ilimitado' : available.toFixed(2) + ' hrs disponibles'}</strong></small>
+                    </div>
+                    <div class="progress" style="height: 20px;">
+                        <div class="progress-bar ${percent > 80 ? 'bg-danger' : barColor}"
+                             role="progressbar"
+                             style="width: ${Math.min(percent, 100)}%">
+                            ${isPilot ? 'Sin limite' : percent.toFixed(1) + '%'}
+                        </div>
+                    </div>
+                </div>
+            `;
+        };
         
         html = `
             <div class="card border-success">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h6 class="text-success mb-0"><i class="bi bi-check-circle"></i> Plan Activo</h6>
-                        <span class="badge bg-success">${sub.days_remaining || 0} días restantes</span>
+                        <span class="badge bg-success">Por servicio</span>
                     </div>
-                    
-                    <p class="mb-2"><strong>Plan:</strong> ${plan.name}</p>
-                    <p class="mb-3"><strong>Vigencia:</strong> ${clientData.subscription_dates || ''}</p>
-                    
-                    <hr>
-                    
-                    <div class="mb-3">
-                        <div class="d-flex justify-content-between align-items-center mb-1">
-                            <small class="text-muted"><strong>Horas Cowork</strong></small>
-                            <small class="text-muted">${coworkUsed.toFixed(2)} / ${coworkTotal} hrs</small>
-                        </div>
-                        <div class="progress" style="height: 20px;">
-                            <div class="progress-bar ${coworkPercent > 80 ? 'bg-danger' : 'bg-primary'}" 
-                                 role="progressbar" 
-                                 style="width: ${Math.min(coworkPercent, 100)}%"
-                                 aria-valuenow="${coworkPercent}"
-                                 aria-valuemin="0" 
-                                 aria-valuemax="100">
-                                ${coworkPercent.toFixed(1)}%
-                            </div>
-                        </div>
-                        <small class="text-success"><strong>Disponible: ${coworkAvailable.toFixed(2)} hrs</strong></small>
-                    </div>
-                    
-                    <div class="mb-0">
-                        <div class="d-flex justify-content-between align-items-center mb-1">
-                            <small class="text-muted"><strong>Horas Sala</strong></small>
-                            <small class="text-muted">${salaUsed.toFixed(2)} / ${salaTotal} hrs</small>
-                        </div>
-                        <div class="progress" style="height: 20px;">
-                            <div class="progress-bar ${salaPercent > 80 ? 'bg-danger' : 'bg-info'}" 
-                                 role="progressbar" 
-                                 style="width: ${Math.min(salaPercent, 100)}%"
-                                 aria-valuenow="${salaPercent}"
-                                 aria-valuemin="0" 
-                                 aria-valuemax="100">
-                                ${salaPercent.toFixed(1)}%
-                            </div>
-                        </div>
-                        <small class="text-success"><strong>Disponible: ${salaAvailable.toFixed(2)} hrs</strong></small>
-                    </div>
+                    ${renderServicePlan('Horas Cowork', coworkData, 'cowork')}
+                    ${renderServicePlan('Horas Sala', salaData, 'meeting_room')}
                 </div>
             </div>
         `;
         
         // Validar disponibilidad según el plan
-        if (!plan.cowork_hours || plan.cowork_hours <= 0) {
+        if (coworkData && coworkData.status === 'ambiguous') {
+            coworkDisabled = true;
+            coworkInfo = '<i class="bi bi-x-circle text-danger"></i> ' + (coworkData.message || 'Plan ambiguo');
+        } else if (coworkData && coworkData.plan && !coworkData.is_pilot && (!coworkData.plan.cowork_hours || coworkData.plan.cowork_hours <= 0)) {
             coworkDisabled = true;
             coworkInfo = '<i class="bi bi-x-circle text-danger"></i> Plan sin horas de cowork';
-        } else if (coworkAvailable <= 0) {
+        } else if (coworkData && coworkData.plan && !coworkData.is_pilot && Number(coworkData.hours_available || 0) <= 0) {
             coworkDisabled = true;
             coworkInfo = '<i class="bi bi-x-circle text-danger"></i> No hay horas disponibles';
         } else if (!coworkDisabled) {
-            coworkInfo = `${coworkAvailable.toFixed(2)} horas disponibles`;
+            coworkInfo = coworkData && coworkData.is_pilot ? 'Uso ilimitado (plan piloto)' : `${Number(coworkData?.hours_available || 0).toFixed(2)} horas disponibles`;
         }
         
-        if (!plan.meeting_room_hours || plan.meeting_room_hours <= 0) {
+        if (salaData && salaData.status === 'ambiguous') {
+            salaDisabled = true;
+            salaInfo = '<i class="bi bi-x-circle text-danger"></i> ' + (salaData.message || 'Plan ambiguo');
+        } else if (salaData && salaData.plan && !salaData.is_pilot && (!salaData.plan.meeting_room_hours || salaData.plan.meeting_room_hours <= 0)) {
             salaDisabled = true;
             salaInfo = '<i class="bi bi-x-circle text-danger"></i> Plan sin horas de sala';
-        } else if (salaAvailable <= 0) {
+        } else if (salaData && salaData.plan && !salaData.is_pilot && Number(salaData.hours_available || 0) <= 0) {
             salaDisabled = true;
             salaInfo = '<i class="bi bi-x-circle text-danger"></i> No hay horas disponibles';
         } else if (!salaDisabled) {
-            salaInfo = `${salaAvailable.toFixed(2)} horas disponibles`;
+            salaInfo = salaData && salaData.is_pilot ? 'Uso ilimitado (plan piloto)' : `${Number(salaData?.hours_available || 0).toFixed(2)} horas disponibles`;
         }
         
     } else {
@@ -174,13 +174,13 @@ document.getElementById('service_master_search')?.addEventListener('input', func
                     if (client.current_subscription && client.current_subscription.plan) {
                         html += `
                             <a href="#" class="list-group-item list-group-item-action" 
-                               onclick="selectServiceMaster(${client.id}, '${client.first_name} ${client.last_name}', '${client.current_subscription.plan.name}'); return false;">
+                               onclick="selectServiceMaster(${client.id}, '${client.first_name} ${client.last_name}', '${client.current_subscription.plan.name}${client.current_subscription.plan.is_pilot ? ' (Piloto)' : ''}'); return false;">
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div>
                                         <strong>${client.first_name} ${client.last_name}</strong>
                                         <br><small class="text-muted">${client.document_number}</small>
                                     </div>
-                                    <span class="badge bg-success">${client.current_subscription.plan.name}</span>
+                                    <span class="badge bg-success">${client.current_subscription.plan.name}${client.current_subscription.plan.is_pilot ? ' (Piloto)' : ''}</span>
                                 </div>
                             </a>
                         `;

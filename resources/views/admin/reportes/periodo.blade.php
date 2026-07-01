@@ -133,7 +133,7 @@
                                             @endif
                                         </td>
                                         <td>{{ $subscription->start_date->format('Y-m-d') }}</td>
-                                        <td>{{ $subscription->end_date->format('Y-m-d') }}</td>
+                                        <td>{{ $subscription->end_date ? $subscription->end_date->format('Y-m-d') : 'Sin vencimiento' }}</td>
                                         <td>{{ $subscription->plan?->name ?? 'Plan' }}</td>
                                         <td>S/. {{ number_format($subscription->monthly_price ?? $subscription->plan?->price ?? 0, 2) }}</td>
                                     </tr>

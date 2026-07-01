@@ -68,13 +68,17 @@ Route::middleware('auth')->group(function () {
         Route::post('/clientes/{client}/suscribir', [ClientController::class, 'suscribir'])->name('clientes.suscribir');
         Route::post('/clientes/{client}/renovar', [ClientController::class, 'renovar'])->name('clientes.renovar');
         Route::post('/clientes/{client}/modificar-plan', [ClientController::class, 'modificarPlan'])->name('clientes.modificarPlan');
+        Route::post('/clientes/{client}/actualizar-cupos-ultra', [ClientController::class, 'actualizarCuposUltra'])->name('clientes.actualizarCuposUltra');
         Route::post('/clientes/{client}/iniciar-plan', [ClientController::class, 'iniciarPlan'])->name('clientes.iniciarPlan');
         Route::post('/clientes/{client}/recalcular-horas', [ClientController::class, 'recalcularHorasTracking'])->name('clientes.recalcularHorasTracking');
+        Route::post('/clientes/{client}/planes/{subscription}/miembros', [ClientController::class, 'storeSubscriptionMember'])->name('clientes.subscriptionMembers.store');
+        Route::delete('/clientes/{client}/planes/{subscription}/miembros/{member}', [ClientController::class, 'destroySubscriptionMember'])->name('clientes.subscriptionMembers.destroy');
         Route::get('/clientes/{client}/registro/{subscription}', [ClientController::class, 'detalleRegistro'])->name('clientes.detalleRegistro');
         Route::put('/clientes/{client}/registro/{subscription}/fechas', [ClientController::class, 'actualizarFechasPlan'])->name('clientes.actualizarFechasPlan');
         Route::get('/clientes/{client}/registro/{subscription}/excel', [ClientController::class, 'exportDetalleRegistroExcel'])->name('clientes.detalleRegistroExcel');
         Route::get('/clientes/{client}/registro/{subscription}/pdf', [ClientController::class, 'exportDetalleRegistroPdf'])->name('clientes.detalleRegistroPdf');
         Route::delete('/clientes/registro/{usageRecord}', [ClientController::class, 'eliminarRegistro'])->name('clientes.eliminarRegistro');
+        Route::put('/clientes/registro/{usageRecord}', [ClientController::class, 'actualizarRegistro'])->name('clientes.actualizarRegistro');
 
         // Planes
         Route::get('/planes', [PlanController::class, 'index'])->name('planes.index');

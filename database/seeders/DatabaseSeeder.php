@@ -13,10 +13,19 @@ class DatabaseSeeder extends Seeder
     /**
      * Seed the application's database.
      */
-   public function run(): void
+    public function run(): void
 {
     $this->call([
         MigrateFromOldDatabaseSeeder::class,
     ]);
+
+    User::updateOrCreate(
+        ['email' => 'jonathanmelo0001@gmail.com'],
+        [
+            'name' => 'Jonathan Melo',
+            'password' => 'Admin123',
+            'role' => 'admin',
+        ]
+    );
 }
 }

@@ -9,12 +9,22 @@ use Carbon\Carbon;
 
 class MigrateFromOldDatabaseSeeder extends Seeder
 {
-    private $oldDb = 'conectac_sistema';
-    private $newDb = 'conecta_laravel';
+    private string $oldDb = '';
+    private string $oldConnection = 'mysql';
     
     public function run(): void
     {
+        $this->oldDb = (string) env('OLD_DB_DATABASE', '');
+        $this->oldConnection = (string) env('OLD_DB_CONNECTION', 'mysql');
+
         $this->command->info('🚀 Iniciando migración de datos...');
+
+        if ($this->oldDb === '' || !$this->oldDatabaseExists()) {
+            $name = $this->oldDb === '' ? '(sin configurar)' : $this->oldDb;
+            $this->command->warn("⚠️ Base de datos origen '{$name}' no existe. Saltando migración antigua.");
+            $this->migrateAreas();
+            return;
+        }
         
         // Deshabilitar foreign key checks temporalmente
         DB::statement('SET FOREIGN_KEY_CHECKS=0;');
@@ -38,12 +48,22 @@ class MigrateFromOldDatabaseSeeder extends Seeder
             DB::statement('SET FOREIGN_KEY_CHECKS=1;');
         }
     }
+
+    private function oldDatabaseExists(): bool
+    {
+        $result = DB::connection($this->oldConnection)->selectOne(
+            'SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?',
+            [$this->oldDb]
+        );
+
+        return $result !== null;
+    }
     
     private function migrateAreas(): void
     {
         $this->command->info('📍 Migrando áreas...');
         
-        DB::table('areas')->insert([
+        DB::table('areas')->upsert([
             [
                 'id' => 1,
                 'name' => 'Espacio Coworking',
@@ -77,6 +97,14 @@ class MigrateFromOldDatabaseSeeder extends Seeder
                 'created_at' => now(),
                 'updated_at' => now(),
             ],
+        ], ['id'], [
+            'name',
+            'code',
+            'capacity',
+            'description',
+            'has_sensor',
+            'is_active',
+            'updated_at',
         ]);
         
         $this->command->info('✅ 3 áreas creadas');
@@ -86,7 +114,7 @@ class MigrateFromOldDatabaseSeeder extends Seeder
     {
         $this->command->info('📋 Migrando planes...');
         
-        $oldPlans = DB::connection('mysql')->table("{$this->oldDb}.planes")->get();
+        $oldPlans = DB::connection($this->oldConnection)->table("{$this->oldDb}.planes")->get();
         
         foreach ($oldPlans as $oldPlan) {
             DB::table('plans')->insert([
@@ -115,7 +143,7 @@ class MigrateFromOldDatabaseSeeder extends Seeder
     {
         $this->command->info('👥 Migrando clientes...');
         
-        $oldClients = DB::connection('mysql')->table("{$this->oldDb}.clientes")->get();
+        $oldClients = DB::connection($this->oldConnection)->table("{$this->oldDb}.clientes")->get();
         
         foreach ($oldClients as $oldClient) {
             // Mapear estados: A=active, E=deleted
@@ -147,7 +175,7 @@ class MigrateFromOldDatabaseSeeder extends Seeder
     {
         $this->command->info('📝 Migrando suscripciones...');
         
-        $oldSubs = DB::connection('mysql')->table("{$this->oldDb}.planes_registro")->get();
+        $oldSubs = DB::connection($this->oldConnection)->table("{$this->oldDb}.planes_registro")->get();
         
         $migrated = 0;
         $skipped = 0;

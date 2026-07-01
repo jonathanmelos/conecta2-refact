@@ -28,8 +28,33 @@
                         </div>
                     </div>
 
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch"
+                                   id="is_pilot" name="is_pilot" value="1"
+                                   {{ old('is_pilot') ? 'checked' : '' }}>
+                            <label class="form-check-label fw-semibold" for="is_pilot">
+                                Plan piloto (sin limite de horas)
+                            </label>
+                        </div>
+                        <small class="text-muted d-block">
+                            Registra horas usadas en cowork y sala sin bloquear por horas contratadas.
+                        </small>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch"
+                                   id="is_ultra_custom" name="is_ultra_custom" value="1"
+                                   {{ old('is_ultra_custom') ? 'checked' : '' }}>
+                            <label class="form-check-label fw-semibold" for="is_ultra_custom">
+                                Plan ultra personalizado
+                            </label>
+                        </div>
+                    </div>
+
                     <div class="row">
-                        <div class="col-md-3 mb-3">
+                        <div class="col-md-3 mb-3" id="cowork_hours_col">
                             <label for="cowork_hours" class="form-label">Horas Cowork <span class="text-danger">*</span></label>
                             <input type="number" class="form-control @error('cowork_hours') is-invalid @enderror"
                                    id="cowork_hours" name="cowork_hours" value="{{ old('cowork_hours', 0) }}">
@@ -37,7 +62,7 @@
                                 <div class="invalid-feedback">{{ $message }}</div>
                             @enderror
                         </div>
-                        <div class="col-md-3 mb-3">
+                        <div class="col-md-3 mb-3" id="meeting_room_hours_col">
                             <label for="meeting_room_hours" class="form-label">Horas Sala Reuniones <span class="text-danger">*</span></label>
                             <input type="number" class="form-control @error('meeting_room_hours') is-invalid @enderror"
                                    id="meeting_room_hours" name="meeting_room_hours" value="{{ old('meeting_room_hours', 0) }}">
@@ -45,7 +70,7 @@
                                 <div class="invalid-feedback">{{ $message }}</div>
                             @enderror
                         </div>
-                        <div class="col-md-3 mb-3">
+                        <div class="col-md-3 mb-3" id="prints_included_col">
                             <label for="prints_included" class="form-label">Impresiones <span class="text-danger">*</span></label>
                             <input type="number" class="form-control @error('prints_included') is-invalid @enderror"
                                    id="prints_included" name="prints_included" value="{{ old('prints_included', 0) }}">
@@ -53,7 +78,7 @@
                                 <div class="invalid-feedback">{{ $message }}</div>
                             @enderror
                         </div>
-                        <div class="col-md-3 mb-3">
+                        <div class="col-md-3 mb-3" id="events_included_col">
                             <label for="events_included" class="form-label">Evento <span class="text-danger">*</span></label>
                             <input type="number" class="form-control @error('events_included') is-invalid @enderror"
                                    id="events_included" name="events_included" value="{{ old('events_included', 0) }}">
@@ -108,4 +133,41 @@
         </div>
     </div>
 </div>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const pilotToggle = document.getElementById('is_pilot');
+    const ultraCustomToggle = document.getElementById('is_ultra_custom');
+    const coworkInput = document.getElementById('cowork_hours');
+    const salaInput = document.getElementById('meeting_room_hours');
+    const coworkCol = document.getElementById('cowork_hours_col');
+    const salaCol = document.getElementById('meeting_room_hours_col');
+    const printsCol = document.getElementById('prints_included_col');
+    const eventsCol = document.getElementById('events_included_col');
+
+    function syncPilotState() {
+        const isPilot = pilotToggle.checked;
+        if (isPilot) {
+            coworkInput.value = 0;
+            salaInput.value = 0;
+        }
+        coworkInput.readOnly = isPilot;
+        salaInput.readOnly = isPilot;
+        coworkInput.classList.toggle('bg-light', isPilot);
+        salaInput.classList.toggle('bg-light', isPilot);
+    }
+
+    function syncUltraCustomState() {
+        const isUltraCustom = ultraCustomToggle.checked;
+        coworkCol.classList.toggle('d-none', isUltraCustom);
+        salaCol.classList.toggle('d-none', isUltraCustom);
+        printsCol.classList.toggle('d-none', isUltraCustom);
+        eventsCol.classList.toggle('d-none', isUltraCustom);
+    }
+
+    pilotToggle.addEventListener('change', syncPilotState);
+    ultraCustomToggle.addEventListener('change', syncUltraCustomState);
+    syncPilotState();
+    syncUltraCustomState();
+});
+</script>
 @endsection

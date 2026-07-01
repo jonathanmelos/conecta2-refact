@@ -62,9 +62,12 @@
                                             @foreach($subscriptions as $subscription)
                                                 <tr onclick="window.location='{{ route('admin.clientes.detalleRegistro', [$client, $subscription]) }}'">
                                                     <td>{{ $subscription->id }}</td>
-                                                    <td>{{ $subscription->plan->name ?? 'Plan' }}</td>
+                                                    <td>
+                                                        {{ $subscription->plan->name ?? 'Plan' }}
+                                                        {{ $subscription->plan && $subscription->plan->is_pilot ? ' (Piloto)' : '' }}
+                                                    </td>
                                                     <td>{{ $subscription->start_date->format('Y-m-d') }}</td>
-                                                    <td>{{ $subscription->end_date->format('Y-m-d') }}</td>
+                                                    <td>{{ $subscription->end_date ? $subscription->end_date->format('Y-m-d') : 'Sin vencimiento' }}</td>
                                                 </tr>
                                             @endforeach
                                         </tbody>

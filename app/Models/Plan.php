@@ -19,6 +19,8 @@ class Plan extends Model
         'operational_cost',
         'discount_percentage',
         'description',
+        'is_pilot',
+        'is_ultra_custom',
         'is_active',
     ];
 
@@ -32,6 +34,8 @@ class Plan extends Model
         'deposit_required' => 'decimal:2',
         'operational_cost' => 'decimal:2',
         'discount_percentage' => 'decimal:2',
+        'is_pilot' => 'boolean',
+        'is_ultra_custom' => 'boolean',
         'is_active' => 'boolean',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',

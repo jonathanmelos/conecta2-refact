@@ -152,7 +152,8 @@
                                             data-sala="{{ $plan->meeting_room_hours }}"
                                             data-impresiones="{{ $plan->prints_included }}"
                                             data-eventos="{{ $plan->events_included }}"
-                                            data-precio="{{ $plan->price }}">
+                                            data-precio="{{ $plan->price }}"
+                                            data-ultra="{{ $plan->is_ultra_custom ? 1 : 0 }}">
                                     </option>
                                 @endforeach
                             </datalist>
@@ -186,6 +187,64 @@
                             </div>
                             <div class="col-md-3">
                                 <strong>Eventos:</strong> <span id="infoEventos">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="ultraCustomFields" class="card border-dark bg-light mt-3 d-none">
+                        <div class="card-body">
+                            <h6 class="mb-3 text-dark">Cupos y precio personalizados (Plan Ultra)</h6>
+                            <div class="row">
+                                <div class="col-md-4 mb-3">
+                                    <label for="custom_cowork_hours" class="form-label">Horas Cowork</label>
+                                    <input type="number" min="0" step="0.01"
+                                           class="form-control @error('custom_cowork_hours') is-invalid @enderror"
+                                           id="custom_cowork_hours" name="custom_cowork_hours"
+                                           value="{{ old('custom_cowork_hours') }}">
+                                    @error('custom_cowork_hours')
+                                        <div class="invalid-feedback">{{ $message }}</div>
+                                    @enderror
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <label for="custom_meeting_room_hours" class="form-label">Horas Sala Reuniones</label>
+                                    <input type="number" min="0" step="0.01"
+                                           class="form-control @error('custom_meeting_room_hours') is-invalid @enderror"
+                                           id="custom_meeting_room_hours" name="custom_meeting_room_hours"
+                                           value="{{ old('custom_meeting_room_hours') }}">
+                                    @error('custom_meeting_room_hours')
+                                        <div class="invalid-feedback">{{ $message }}</div>
+                                    @enderror
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <label for="custom_monthly_price" class="form-label">Precio Personalizado</label>
+                                    <input type="number" min="0" step="0.01"
+                                           class="form-control @error('custom_monthly_price') is-invalid @enderror"
+                                           id="custom_monthly_price" name="custom_monthly_price"
+                                           value="{{ old('custom_monthly_price') }}">
+                                    @error('custom_monthly_price')
+                                        <div class="invalid-feedback">{{ $message }}</div>
+                                    @enderror
+                                </div>
+                                <div class="col-md-6 mb-1">
+                                    <label for="custom_prints_included" class="form-label">Impresiones</label>
+                                    <input type="number" min="0"
+                                           class="form-control @error('custom_prints_included') is-invalid @enderror"
+                                           id="custom_prints_included" name="custom_prints_included"
+                                           value="{{ old('custom_prints_included') }}">
+                                    @error('custom_prints_included')
+                                        <div class="invalid-feedback">{{ $message }}</div>
+                                    @enderror
+                                </div>
+                                <div class="col-md-6 mb-1">
+                                    <label for="custom_events_included" class="form-label">Eventos Connecta</label>
+                                    <input type="number" min="0"
+                                           class="form-control @error('custom_events_included') is-invalid @enderror"
+                                           id="custom_events_included" name="custom_events_included"
+                                           value="{{ old('custom_events_included') }}">
+                                    @error('custom_events_included')
+                                        <div class="invalid-feedback">{{ $message }}</div>
+                                    @enderror
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -267,6 +326,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const planIdInput = document.getElementById('plan_id');
     const planList = document.getElementById('plan_list');
     const planInfo = document.getElementById('planInfo');
+    const ultraFields = document.getElementById('ultraCustomFields');
+    const customCoworkInput = document.getElementById('custom_cowork_hours');
+    const customSalaInput = document.getElementById('custom_meeting_room_hours');
+    const customPrintsInput = document.getElementById('custom_prints_included');
+    const customEventosInput = document.getElementById('custom_events_included');
+    const customPriceInput = document.getElementById('custom_monthly_price');
     const masterClientSearch = document.getElementById('master_client_search');
     const masterClientIdInput = document.getElementById('master_client_id');
     const masterClientList = document.getElementById('master_client_list');
@@ -282,6 +347,7 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('service_type').required = false;
             masterClientSearch.required = false;
             masterClientIdInput.required = false;
+            mostrarInfoPlan();
         } else {
             seccionConPlan.classList.add('d-none');
             seccionInvitado.classList.remove('d-none');
@@ -292,21 +358,50 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('service_type').required = true;
             masterClientSearch.required = false;
             masterClientIdInput.required = false;
+            ultraFields.classList.add('d-none');
+            customCoworkInput.required = false;
+            customSalaInput.required = false;
+            customPrintsInput.required = false;
+            customEventosInput.required = false;
+            customPriceInput.required = false;
         }
     }
 
     function mostrarInfoPlan() {
         const selected = Array.from(planList.options).find((option) => option.value === planSearch.value);
         if (selected && selected.dataset.id) {
+            const isUltra = selected.dataset.ultra === '1';
             planIdInput.value = selected.dataset.id;
-            document.getElementById('infoCowork').textContent = selected.dataset.cowork || 0;
-            document.getElementById('infoSala').textContent = selected.dataset.sala || 0;
-            document.getElementById('infoImpresiones').textContent = selected.dataset.impresiones || 0;
-            document.getElementById('infoEventos').textContent = selected.dataset.eventos || 0;
+            ultraFields.classList.toggle('d-none', !isUltra);
+
+            if (isUltra) {
+                if (!customCoworkInput.value) customCoworkInput.value = selected.dataset.cowork || 0;
+                if (!customSalaInput.value) customSalaInput.value = selected.dataset.sala || 0;
+                if (!customPrintsInput.value) customPrintsInput.value = selected.dataset.impresiones || 0;
+                if (!customEventosInput.value) customEventosInput.value = selected.dataset.eventos || 0;
+                if (!customPriceInput.value) customPriceInput.value = parseFloat(selected.dataset.precio || 0).toFixed(2);
+            }
+
+            customCoworkInput.required = isUltra;
+            customSalaInput.required = isUltra;
+            customPrintsInput.required = isUltra;
+            customEventosInput.required = isUltra;
+            customPriceInput.required = isUltra;
+
+            document.getElementById('infoCowork').textContent = isUltra ? (customCoworkInput.value || 0) : (selected.dataset.cowork || 0);
+            document.getElementById('infoSala').textContent = isUltra ? (customSalaInput.value || 0) : (selected.dataset.sala || 0);
+            document.getElementById('infoImpresiones').textContent = isUltra ? (customPrintsInput.value || 0) : (selected.dataset.impresiones || 0);
+            document.getElementById('infoEventos').textContent = isUltra ? (customEventosInput.value || 0) : (selected.dataset.eventos || 0);
             planInfo.classList.remove('d-none');
         } else {
             planIdInput.value = '';
             planInfo.classList.add('d-none');
+            ultraFields.classList.add('d-none');
+            customCoworkInput.required = false;
+            customSalaInput.required = false;
+            customPrintsInput.required = false;
+            customEventosInput.required = false;
+            customPriceInput.required = false;
         }
     }
 
@@ -321,6 +416,11 @@ document.addEventListener('DOMContentLoaded', function() {
     tipoInvitado.addEventListener('change', toggleSecciones);
     planSearch.addEventListener('input', mostrarInfoPlan);
     planSearch.addEventListener('change', mostrarInfoPlan);
+    customCoworkInput.addEventListener('input', mostrarInfoPlan);
+    customSalaInput.addEventListener('input', mostrarInfoPlan);
+    customPrintsInput.addEventListener('input', mostrarInfoPlan);
+    customEventosInput.addEventListener('input', mostrarInfoPlan);
+    customPriceInput.addEventListener('input', mostrarInfoPlan);
     masterClientSearch.addEventListener('input', syncMasterClient);
     masterClientSearch.addEventListener('change', syncMasterClient);
 

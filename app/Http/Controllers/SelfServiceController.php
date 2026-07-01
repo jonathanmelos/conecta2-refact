@@ -4,12 +4,16 @@ namespace App\Http\Controllers;
 
 use App\Models\Client;
 use App\Models\Event;
-use App\Models\HoursTracking;
+use App\Services\UsagePlanResolver;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 
 class SelfServiceController extends Controller
 {
+    public function __construct(private UsagePlanResolver $usagePlanResolver)
+    {
+    }
+
     public function index(Request $request)
     {
         $doc = preg_replace('/\D+/', '', (string) $request->get('doc', ''));
@@ -39,8 +43,9 @@ class SelfServiceController extends Controller
             if (!$client) {
                 $clientNotFound = true;
             } else {
-                $subscription = $this->resolveActiveSubscription($client);
-                $planActive = (bool) $subscription;
+                $coworkPlan = $this->usagePlanResolver->resolve($client, 'cowork');
+                $salaPlan = $this->usagePlanResolver->resolve($client, 'meeting_room');
+                $planActive = $coworkPlan['status'] === 'ok' || $salaPlan['status'] === 'ok';
 
                 $clientReservations = Event::where('type', 'reservation')
                     ->where('client_id', $client->id)
@@ -51,31 +56,20 @@ class SelfServiceController extends Controller
                     ->get();
 
                 if ($planActive) {
-                    $isPilotPlan = $subscription->plan && $subscription->plan->is_pilot;
-                    $coworkTracking = HoursTracking::where('subscription_id', $subscription->id)
-                        ->where('service_type', 'cowork')
-                        ->first();
-                    $salaTracking = HoursTracking::where('subscription_id', $subscription->id)
-                        ->where('service_type', 'meeting_room')
-                        ->first();
-
-                    if ($isPilotPlan) {
-                        $hoursAvailable['cowork'] = null;
-                        $hoursAvailable['meeting_room'] = null;
-                    } else {
-                        $hoursAvailable['cowork'] = $coworkTracking
-                            ? max(0, (float) $coworkTracking->total_hours_available - (float) $coworkTracking->hours_used)
-                            : 0;
-                        $hoursAvailable['meeting_room'] = $salaTracking
-                            ? max(0, (float) $salaTracking->total_hours_available - (float) $salaTracking->hours_used)
-                            : 0;
-                    }
+                    $isPilotPlan = ($coworkPlan['status'] === 'ok' && $coworkPlan['is_pilot'])
+                        || ($salaPlan['status'] === 'ok' && $salaPlan['is_pilot']);
+                    $hoursAvailable['cowork'] = $coworkPlan['status'] === 'ok'
+                        ? ($coworkPlan['hours_available'] ?? 0)
+                        : 0;
+                    $hoursAvailable['meeting_room'] = $salaPlan['status'] === 'ok'
+                        ? ($salaPlan['hours_available'] ?? 0)
+                        : 0;
                 }
 
                 if ($spaceKey && isset($spaces[$spaceKey])) {
                     $space = $spaces[$spaceKey];
-                    $canReserveCowork = $planActive && ($isPilotPlan || $hoursAvailable['cowork'] > 0);
-                    $canReserveSala = $planActive && ($isPilotPlan || $hoursAvailable['meeting_room'] > 0);
+                    $canReserveCowork = $coworkPlan['status'] === 'ok' && ($coworkPlan['is_pilot'] || $hoursAvailable['cowork'] > 0);
+                    $canReserveSala = $salaPlan['status'] === 'ok' && ($salaPlan['is_pilot'] || $hoursAvailable['meeting_room'] > 0);
 
                     if (($space['service_type'] === 'cowork' && $canReserveCowork)
                         || ($space['service_type'] === 'meeting_room' && $canReserveSala)
@@ -162,21 +156,21 @@ class SelfServiceController extends Controller
             $client->update(['email' => $validated['email']]);
         }
 
-        $subscription = $this->resolveActiveSubscription($client);
-        $planActive = (bool) $subscription;
+        $space = $spaces[$spaceKey];
+        $resolvedPlan = $this->usagePlanResolver->resolve($client, $space['service_type']);
+        $subscription = $resolvedPlan['subscription'];
+        $planActive = $resolvedPlan['status'] === 'ok';
 
         if (!$planActive) {
+            if ($resolvedPlan['status'] === 'ambiguous') {
+                return back()->with('error', $resolvedPlan['message']);
+            }
+
             return back()->with('error', 'El cliente no tiene un plan activo.');
         }
 
-        $space = $spaces[$spaceKey];
-        $tracking = HoursTracking::where('subscription_id', $subscription->id)
-            ->where('service_type', $space['service_type'])
-            ->first();
-        $isPilotPlan = $subscription->plan && $subscription->plan->is_pilot;
-        $availableHours = $tracking
-            ? max(0, (float) $tracking->total_hours_available - (float) $tracking->hours_used)
-            : 0;
+        $isPilotPlan = $resolvedPlan['is_pilot'];
+        $availableHours = $resolvedPlan['hours_available'];
 
         if (!$isPilotPlan && $availableHours <= 0) {
             return back()->with('error', 'No hay horas disponibles para este servicio.');
@@ -251,36 +245,13 @@ class SelfServiceController extends Controller
         ];
     }
 
-    private function resolveActiveSubscription(Client $client)
-    {
-        $subscription = $client->currentSubscription;
-
-        if ($subscription
-            && $subscription->start_date->lte(today())
-            && ($subscription->end_date ? $subscription->end_date->gte(today()) : true)
-        ) {
-            return $subscription->loadMissing('plan');
-        }
-
-        return $client->subscriptions()
-            ->with('plan')
-            ->whereDate('start_date', '<=', today())
-            ->where(function ($query) {
-                $query->whereDate('end_date', '>=', today())
-                    ->orWhereNull('end_date');
-            })
-            ->orderByRaw("status = 'active' desc")
-            ->orderBy('start_date', 'desc')
-            ->first();
-    }
-
     private function resolveClientByDocument(string $doc): ?Client
     {
         if ($doc === '') {
             return null;
         }
 
-        $candidates = Client::with(['currentSubscription.plan', 'subscriptions.plan'])
+        $candidates = Client::with(['currentSubscription.plan', 'subscriptions.plan', 'invitedBy.currentSubscription.plan', 'invitedBy.subscriptions.plan'])
             ->where('document_number', $doc)
             ->orWhere('document_number', 'like', $doc . '%')
             ->limit(10)
@@ -291,7 +262,8 @@ class SelfServiceController extends Controller
         }
 
         $withActivePlan = $candidates->first(function ($client) {
-            return (bool) $this->resolveActiveSubscription($client);
+            return $this->usagePlanResolver->resolve($client, 'cowork')['status'] === 'ok'
+                || $this->usagePlanResolver->resolve($client, 'meeting_room')['status'] === 'ok';
         });
         if ($withActivePlan) {
             return $withActivePlan;

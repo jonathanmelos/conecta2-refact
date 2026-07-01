@@ -51,6 +51,14 @@
                             <a href="{{ route('admin.clientes.edit', $client) }}" class="btn btn-sm btn-warning">
                                 Editar datos del cliente
                             </a>
+                            @if($client->invitation_link)
+                                <a href="{{ $client->invitation_link }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                    Link de invitación
+                                </a>
+                                <a href="{{ $client->whatsapp_invitation_url }}" target="_blank" class="btn btn-sm btn-outline-success">
+                                    Enviar por WhatsApp
+                                </a>
+                            @endif
                         </div>
                     </div>
                 </div>
@@ -79,13 +87,16 @@
                                         @if($planVigente->plan->is_pilot)
                                             <span class="badge bg-info text-dark ms-1">Piloto</span>
                                         @endif
+                                        @if($planVigente->is_ultra_custom)
+                                            <span class="badge bg-dark ms-1">Ultra personalizado</span>
+                                        @endif
                                     </h4>
                                     <p class="text-muted mb-1">
                                         <strong>Fecha de vencimiento:</strong><br>
                                         {{ $endDate ? $endDate->locale('es')->isoFormat('D [de] MMMM [de] YYYY') : 'Sin vencimiento' }}
                                     </p>
                                     <p class="mb-0">
-                                        <strong>Precio:</strong> ${{ number_format($planVigente->plan->price, 2) }}
+                                        <strong>Precio:</strong> ${{ number_format($planVigente->monthly_price, 2) }}
                                     </p>
                                 </div>
                                 <div class="col-md-6 text-end">
@@ -96,6 +107,11 @@
                                     <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalModificar">
                                         Modificar Plan
                                     </button>
+                                    @if($planVigente->is_ultra_custom)
+                                        <button type="button" class="btn btn-outline-dark" data-bs-toggle="modal" data-bs-target="#modalCuposUltra">
+                                            Editar Cupos Ultra
+                                        </button>
+                                    @endif
                                     @if($detalleRegistroSubscription)
                                         <a href="{{ route('admin.clientes.detalleRegistro', [$client, $detalleRegistroSubscription]) }}" class="btn btn-outline-secondary">
                                             Detalle Registro
@@ -407,6 +423,115 @@
                     </div>
                 </div>
 
+                @if($assignableSubscriptions->count() > 0)
+                    <div class="card mt-4">
+                        <div class="card-header bg-info text-white">
+                            <h6 class="mb-0">Asignaciones por Plan</h6>
+                        </div>
+                        <div class="card-body">
+                            <p class="small text-muted mb-3">
+                                Use esta opcion solo cuando una persona deba consumir un plan especifico. Si no hay asignaciones, el sistema mantiene el comportamiento normal.
+                            </p>
+
+                            @foreach($assignableSubscriptions as $subscription)
+                                @php
+                                    $subscription->loadMissing('members.client');
+                                    $isCurrentWindow = $subscription->start_date <= now()
+                                        && ($subscription->end_date ? $subscription->end_date >= now() : true);
+                                @endphp
+                                <div class="border rounded p-2 mb-3 {{ $isCurrentWindow ? 'border-success' : '' }}">
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <div>
+                                            <strong>#{{ $subscription->id }} - {{ $subscription->plan->name ?? 'Plan' }}</strong>
+                                            @if($isCurrentWindow)
+                                                <span class="badge bg-success">Vigente</span>
+                                            @endif
+                                            <br>
+                                            <small class="text-muted">
+                                                {{ $subscription->start_date->format('d/m/Y') }} -
+                                                {{ $subscription->end_date ? $subscription->end_date->format('d/m/Y') : 'Sin vencimiento' }}
+                                            </small>
+                                        </div>
+                                    </div>
+
+                                    @if($subscription->members->count() > 0)
+                                        <div class="list-group list-group-flush mb-2">
+                                            @foreach($subscription->members as $member)
+                                                <div class="list-group-item px-0 py-2 d-flex justify-content-between align-items-center">
+                                                    <div>
+                                                        <strong>{{ $member->client->full_name ?? 'Cliente' }}</strong>
+                                                        @if($member->is_default_cowork)
+                                                            <span class="badge bg-primary">Cowork preferido</span>
+                                                        @endif
+                                                        @if($member->is_default_meeting_room)
+                                                            <span class="badge bg-info">Sala preferida</span>
+                                                        @endif
+                                                        <br>
+                                                        <small class="text-muted">
+                                                            {{ $member->can_use_cowork ? 'Cowork' : '' }}
+                                                            {{ $member->can_use_cowork && $member->can_use_meeting_room ? ' / ' : '' }}
+                                                            {{ $member->can_use_meeting_room ? 'Sala' : '' }}
+                                                        </small>
+                                                    </div>
+                                                    <form method="POST"
+                                                          action="{{ route('admin.clientes.subscriptionMembers.destroy', [$client, $subscription, $member]) }}"
+                                                          onsubmit="return confirm('¿Eliminar esta asignacion?')">
+                                                        @csrf
+                                                        @method('DELETE')
+                                                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                            Quitar
+                                                        </button>
+                                                    </form>
+                                                </div>
+                                            @endforeach
+                                        </div>
+                                    @else
+                                        <div class="small text-muted mb-2">Sin personas asignadas directamente a este plan.</div>
+                                    @endif
+
+                                    <form method="POST" action="{{ route('admin.clientes.subscriptionMembers.store', [$client, $subscription]) }}">
+                                        @csrf
+                                        <div class="mb-2">
+                                            <select name="client_id" class="form-select form-select-sm" required>
+                                                @foreach($assignableClients as $assignableClient)
+                                                    <option value="{{ $assignableClient->id }}">
+                                                        {{ $assignableClient->full_name }} - {{ $assignableClient->document_number }}
+                                                    </option>
+                                                @endforeach
+                                            </select>
+                                        </div>
+                                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" name="can_use_cowork" value="1" id="cowork_{{ $subscription->id }}" checked>
+                                                <label class="form-check-label small" for="cowork_{{ $subscription->id }}">Cowork</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" name="can_use_meeting_room" value="1" id="sala_{{ $subscription->id }}" checked>
+                                                <label class="form-check-label small" for="sala_{{ $subscription->id }}">Sala</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" name="is_default" value="1" id="default_{{ $subscription->id }}">
+                                                <label class="form-check-label small" for="default_{{ $subscription->id }}">Preferido para servicios seleccionados</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" name="is_default_cowork" value="1" id="default_cowork_{{ $subscription->id }}">
+                                                <label class="form-check-label small" for="default_cowork_{{ $subscription->id }}">Preferido cowork</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" name="is_default_meeting_room" value="1" id="default_sala_{{ $subscription->id }}">
+                                                <label class="form-check-label small" for="default_sala_{{ $subscription->id }}">Preferido sala</label>
+                                            </div>
+                                            <button type="submit" class="btn btn-sm btn-outline-primary ms-auto">
+                                                Asignar
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+                            @endforeach
+                        </div>
+                    </div>
+                @endif
+
                 {{-- Clientes invitados (si los tiene) --}}
                 @if($client->guests && $client->guests->count() > 0)
                     <div class="card mt-4">
@@ -523,5 +648,66 @@
         </div>
     </div>
 </div>
+
+@if($planVigente->is_ultra_custom)
+<div class="modal fade" id="modalCuposUltra" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="{{ route('admin.clientes.actualizarCuposUltra', $client) }}" method="POST">
+                @csrf
+                <input type="hidden" name="subscription_id" value="{{ $planVigente->id }}">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title">Editar Cupos Ultra Personalizados</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-3">
+                        Personaliza los cupos contratados para <strong>{{ $client->full_name }}</strong> en esta suscripción.
+                    </p>
+
+                    <div class="mb-3">
+                        <label for="custom_cowork_hours" class="form-label">Horas en COWORK (Contratadas)</label>
+                        <input type="number" step="0.01" min="0" class="form-control"
+                               id="custom_cowork_hours" name="custom_cowork_hours"
+                               value="{{ old('custom_cowork_hours', $planVigente->effective_cowork_hours) }}" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="custom_meeting_room_hours" class="form-label">Horas en Sala Reuniones (Contratadas)</label>
+                        <input type="number" step="0.01" min="0" class="form-control"
+                               id="custom_meeting_room_hours" name="custom_meeting_room_hours"
+                               value="{{ old('custom_meeting_room_hours', $planVigente->effective_meeting_room_hours) }}" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="custom_prints_included" class="form-label">Impresiones (Contratadas)</label>
+                        <input type="number" min="0" class="form-control"
+                               id="custom_prints_included" name="custom_prints_included"
+                               value="{{ old('custom_prints_included', $planVigente->effective_prints_included) }}" required>
+                    </div>
+
+                    <div class="mb-1">
+                        <label for="custom_events_included" class="form-label">Eventos Connecta (Contratados)</label>
+                        <input type="number" min="0" class="form-control"
+                               id="custom_events_included" name="custom_events_included"
+                               value="{{ old('custom_events_included', $planVigente->effective_events_included) }}" required>
+                    </div>
+
+                    <div class="mb-1 mt-3">
+                        <label for="custom_monthly_price" class="form-label">Precio Personalizado</label>
+                        <input type="number" min="0" step="0.01" class="form-control"
+                               id="custom_monthly_price" name="custom_monthly_price"
+                               value="{{ old('custom_monthly_price', $planVigente->monthly_price) }}" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-dark">Guardar Cupos</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+@endif
 @endif
 @endsection

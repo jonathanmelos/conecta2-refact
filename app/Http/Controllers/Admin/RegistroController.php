@@ -7,11 +7,16 @@ use App\Models\Client;
 use App\Models\UsageRecord;
 use App\Models\HoursTracking;
 use App\Models\Subscription;
+use App\Services\UsagePlanResolver;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 
 class RegistroController extends Controller
 {
+    public function __construct(private UsagePlanResolver $usagePlanResolver)
+    {
+    }
+
     public function index(Request $request)
     {
         $doc = $request->get('doc', '0');
@@ -21,16 +26,9 @@ class RegistroController extends Controller
         
         // Si hay un documento seleccionado, buscar el cliente
         if ($doc !== '0' && $doc !== '') {
-            $selectedClient = Client::with(['currentSubscription.plan', 'hoursTracking', 'invitedBy', 'guests'])
+            $selectedClient = Client::with(['currentSubscription.plan', 'subscriptions.plan', 'invitedBy.currentSubscription.plan', 'invitedBy.subscriptions.plan', 'hoursTracking', 'guests'])
                 ->where('document_number', $doc)
                 ->first();
-            
-            if ($selectedClient && $selectedClient->currentSubscription) {
-                $hoursTracking = $selectedClient->hoursTracking()
-                    ->where('subscription_id', $selectedClient->current_subscription_id)
-                    ->get()
-                    ->keyBy('service_type');
-            }
 
             if ($selectedClient) {
                 $activeCowork = UsageRecord::where('client_id', $selectedClient->id)
@@ -45,25 +43,10 @@ class RegistroController extends Controller
                     ->whereDate('check_in', today())
                     ->exists();
 
-                $subscriptionData = null;
-                if ($selectedClient->currentSubscription) {
-                    $subscriptionData = [
-                        'id' => $selectedClient->currentSubscription->id,
-                        'plan_id' => $selectedClient->currentSubscription->plan_id,
-                        'start_date' => $selectedClient->currentSubscription->start_date->format('Y-m-d'),
-                        'end_date' => $selectedClient->currentSubscription->end_date->format('Y-m-d'),
-                        'days_remaining' => max(0, now()->diffInDays($selectedClient->currentSubscription->end_date, false)),
-                        'plan' => [
-                            'id' => $selectedClient->currentSubscription->plan->id,
-                            'name' => $selectedClient->currentSubscription->plan->name,
-                            'cowork_hours' => $selectedClient->currentSubscription->plan->cowork_hours,
-                            'meeting_room_hours' => $selectedClient->currentSubscription->plan->meeting_room_hours,
-                        ],
-                    ];
-                }
-
-                $coworkTracking = $hoursTracking ? ($hoursTracking['cowork'] ?? null) : null;
-                $salaTracking = $hoursTracking ? ($hoursTracking['meeting_room'] ?? null) : null;
+                $servicePlans = $this->usagePlanResolver->payloadForClient($selectedClient);
+                $defaultSubscriptionData = $servicePlans['cowork']['plan']
+                    ? $servicePlans['cowork']
+                    : ($servicePlans['meeting_room']['plan'] ? $servicePlans['meeting_room'] : null);
 
                 $selectedClientData = [
                     'id' => $selectedClient->id,
@@ -74,12 +57,11 @@ class RegistroController extends Controller
                     'phone' => $selectedClient->phone,
                     'active_cowork_today' => $activeCowork,
                     'active_sala_today' => $activeSala,
-                    'current_subscription' => $subscriptionData,
-                    'subscription_dates' => $subscriptionData ?
-                        $selectedClient->currentSubscription->start_date->format('d/m/Y') . ' - ' . $selectedClient->currentSubscription->end_date->format('d/m/Y')
-                        : null,
-                    'cowork_hours_used' => $coworkTracking ? (float) $coworkTracking->hours_used : 0,
-                    'sala_hours_used' => $salaTracking ? (float) $salaTracking->hours_used : 0,
+                    'current_subscription' => $defaultSubscriptionData,
+                    'service_plans' => $servicePlans,
+                    'subscription_dates' => $defaultSubscriptionData['dates_label'] ?? null,
+                    'cowork_hours_used' => (float) $servicePlans['cowork']['hours_used'],
+                    'sala_hours_used' => (float) $servicePlans['meeting_room']['hours_used'],
                 ];
             }
         }
@@ -238,9 +220,13 @@ class RegistroController extends Controller
     
     public function buscar(Request $request)
     {
-        $search = $request->get('search', '');
+        $search = trim($request->get('search', ''));
+
+        if ($search === '') {
+            return response()->json([]);
+        }
         
-        $clients = Client::with(['currentSubscription.plan', 'hoursTracking'])
+        $clients = Client::with(['currentSubscription.plan', 'subscriptions.plan', 'invitedBy.currentSubscription.plan', 'invitedBy.subscriptions.plan', 'hoursTracking'])
             ->where('client_status', 'active')
             ->where(function($query) use ($search) {
                 $query->where('document_number', 'LIKE', "%{$search}%")
@@ -263,32 +249,10 @@ class RegistroController extends Controller
                 ->whereDate('check_in', today())
                 ->exists();
             
-            $subscriptionData = null;
-            if ($client->currentSubscription) {
-                $subscriptionData = [
-                    'id' => $client->currentSubscription->id,
-                    'plan_id' => $client->currentSubscription->plan_id,
-                    'start_date' => $client->currentSubscription->start_date->format('Y-m-d'),
-                    'end_date' => $client->currentSubscription->end_date->format('Y-m-d'),
-                    'days_remaining' => max(0, now()->diffInDays($client->currentSubscription->end_date, false)),
-                    'plan' => [
-                        'id' => $client->currentSubscription->plan->id,
-                        'name' => $client->currentSubscription->plan->name,
-                        'cowork_hours' => $client->currentSubscription->plan->cowork_hours,
-                        'meeting_room_hours' => $client->currentSubscription->plan->meeting_room_hours,
-                    ]
-                ];
-            }
-            
-            $coworkTracking = HoursTracking::where('client_id', $client->id)
-                ->where('subscription_id', $client->current_subscription_id)
-                ->where('service_type', 'cowork')
-                ->first();
-            
-            $salaTracking = HoursTracking::where('client_id', $client->id)
-                ->where('subscription_id', $client->current_subscription_id)
-                ->where('service_type', 'meeting_room')
-                ->first();
+            $servicePlans = $this->usagePlanResolver->payloadForClient($client);
+            $defaultSubscriptionData = $servicePlans['cowork']['plan']
+                ? $servicePlans['cowork']
+                : ($servicePlans['meeting_room']['plan'] ? $servicePlans['meeting_room'] : null);
             
             return [
                 'id' => $client->id,
@@ -299,12 +263,11 @@ class RegistroController extends Controller
                 'phone' => $client->phone,
                 'active_cowork_today' => $activeCowork,
                 'active_sala_today' => $activeSala,
-                'current_subscription' => $subscriptionData,
-                'subscription_dates' => $subscriptionData ? 
-                    $client->currentSubscription->start_date->format('d/m/Y') . ' - ' . $client->currentSubscription->end_date->format('d/m/Y') 
-                    : null,
-                'cowork_hours_used' => $coworkTracking ? (float)$coworkTracking->hours_used : 0,
-                'sala_hours_used' => $salaTracking ? (float)$salaTracking->hours_used : 0,
+                'current_subscription' => $defaultSubscriptionData,
+                'service_plans' => $servicePlans,
+                'subscription_dates' => $defaultSubscriptionData['dates_label'] ?? null,
+                'cowork_hours_used' => (float) $servicePlans['cowork']['hours_used'],
+                'sala_hours_used' => (float) $servicePlans['meeting_room']['hours_used'],
             ];
         });
         
@@ -345,25 +308,18 @@ class RegistroController extends Controller
             $client->load(['currentSubscription.plan', 'invitedBy.currentSubscription.plan']);
         }
         
-        $subscriptionId = null;
-        $isBillable = true;
-        $planToCheck = null;
-        
-        if ($client->invitedBy && $client->invitedBy->currentSubscription) {
-            $subscriptionId = $client->invitedBy->current_subscription_id;
-            $planToCheck = $client->invitedBy->currentSubscription->plan;
-            $isBillable = false;
-        } elseif ($client->currentSubscription) {
-            $subscriptionId = $client->current_subscription_id;
-            $planToCheck = $client->currentSubscription->plan;
-            $isBillable = false;
-        } else {
-            $subscriptionId = null;
-            $isBillable = true;
+        $resolvedPlan = $this->usagePlanResolver->resolve($client, 'cowork');
+        if ($resolvedPlan['status'] === 'ambiguous') {
+            return redirect()->route('admin.registro.index')->with('error', $resolvedPlan['message']);
         }
-        
+        $subscriptionId = $resolvedPlan['subscription_id'];
+        $isBillable = $resolvedPlan['is_billable'];
+        $subscriptionToCheck = $resolvedPlan['subscription'];
+        $planToCheck = $resolvedPlan['plan'];
+
         if ($planToCheck) {
-            if (!$planToCheck->cowork_hours || $planToCheck->cowork_hours <= 0) {
+            $effectiveCoworkHours = $subscriptionToCheck ? $subscriptionToCheck->effective_cowork_hours : 0;
+            if (!$resolvedPlan['is_pilot'] && $effectiveCoworkHours <= 0) {
                 return redirect()->route('admin.registro.index')
                     ->with('error', 'El plan ' . $planToCheck->name . ' no incluye horas de cowork.');
             }
@@ -388,6 +344,8 @@ class RegistroController extends Controller
         } elseif ($request->master_id) {
             $master = Client::find($request->master_id);
             $message .= ' (Vinculado como invitado de ' . $master->full_name . ')';
+        } elseif ($resolvedPlan['source'] === 'member_assignment') {
+            $message .= ' (Plan asignado #' . $subscriptionId . ')';
         }
         
         return redirect()->route('admin.registro.index')
@@ -428,25 +386,18 @@ class RegistroController extends Controller
             $client->load(['currentSubscription.plan', 'invitedBy.currentSubscription.plan']);
         }
         
-        $subscriptionId = null;
-        $isBillable = true;
-        $planToCheck = null;
-        
-        if ($client->invitedBy && $client->invitedBy->currentSubscription) {
-            $subscriptionId = $client->invitedBy->current_subscription_id;
-            $planToCheck = $client->invitedBy->currentSubscription->plan;
-            $isBillable = false;
-        } elseif ($client->currentSubscription) {
-            $subscriptionId = $client->current_subscription_id;
-            $planToCheck = $client->currentSubscription->plan;
-            $isBillable = false;
-        } else {
-            $subscriptionId = null;
-            $isBillable = true;
+        $resolvedPlan = $this->usagePlanResolver->resolve($client, 'meeting_room');
+        if ($resolvedPlan['status'] === 'ambiguous') {
+            return redirect()->route('admin.registro.index')->with('error', $resolvedPlan['message']);
         }
-        
+        $subscriptionId = $resolvedPlan['subscription_id'];
+        $isBillable = $resolvedPlan['is_billable'];
+        $subscriptionToCheck = $resolvedPlan['subscription'];
+        $planToCheck = $resolvedPlan['plan'];
+
         if ($planToCheck) {
-            if (!$planToCheck->meeting_room_hours || $planToCheck->meeting_room_hours <= 0) {
+            $effectiveMeetingRoomHours = $subscriptionToCheck ? $subscriptionToCheck->effective_meeting_room_hours : 0;
+            if (!$resolvedPlan['is_pilot'] && $effectiveMeetingRoomHours <= 0) {
                 return redirect()->route('admin.registro.index')
                     ->with('error', 'El plan ' . $planToCheck->name . ' no incluye horas de sala de reuniones.');
             }
@@ -471,6 +422,8 @@ class RegistroController extends Controller
         } elseif ($request->master_id) {
             $master = Client::find($request->master_id);
             $message .= ' (Vinculado como invitado de ' . $master->full_name . ')';
+        } elseif ($resolvedPlan['source'] === 'member_assignment') {
+            $message .= ' (Plan asignado #' . $subscriptionId . ')';
         }
         
         return redirect()->route('admin.registro.index')
@@ -631,8 +584,8 @@ public function actualizarRegistro(Request $request)
                         $subscription = Subscription::with('plan')->find($request->new_subscription_id);
                         if ($subscription && $subscription->plan) {
                             $tracking->total_hours_available = $record->service_type === 'cowork' 
-                                ? $subscription->plan->cowork_hours 
-                                : $subscription->plan->meeting_room_hours;
+                                ? $subscription->effective_cowork_hours
+                                : $subscription->effective_meeting_room_hours;
                         }
                     }
                     
@@ -743,15 +696,15 @@ public function actualizarRegistro(Request $request)
         if (!$registro->subscription || !$registro->subscription->plan) {
             return 0;
         }
-        
-        $plan = $registro->subscription->plan;
-        
+
+        $subscription = $registro->subscription;
+
         if ($registro->service_type === 'cowork') {
-            return $plan->cowork_hours ?? 0;
+            return $subscription->effective_cowork_hours;
         } elseif ($registro->service_type === 'meeting_room') {
-            return $plan->meeting_room_hours ?? 0;
+            return $subscription->effective_meeting_room_hours;
         }
-        
+
         return 0;
     }
 }
