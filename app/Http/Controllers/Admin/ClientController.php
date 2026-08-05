@@ -1209,8 +1209,8 @@ class ClientController extends Controller
             }
         }
 
-        // Calcular impresiones usadas (suma de quantity de TODOS los registros, no solo tipo 'print')
-        $impresionesUsadas = $todosRegistros->sum('quantity');
+        // Calcular impresiones usadas
+        $impresionesUsadas = $todosRegistros->where('service_type', 'print')->sum('quantity');
 
         // Horas contratadas del plan
         $horasCoworkContratadas = $subscription->effective_cowork_hours;
@@ -1334,7 +1334,7 @@ class ClientController extends Controller
             }
         }
 
-        $impresionesUsadas = $registros->sum('quantity');
+        $impresionesUsadas = $registros->where('service_type', 'print')->sum('quantity');
 
         $horasCoworkContratadas = $subscription->effective_cowork_hours;
         $horasSalaContratadas = $subscription->effective_meeting_room_hours;

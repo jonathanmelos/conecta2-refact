@@ -5,6 +5,14 @@ function openImpresionesModal(clientId, clientName, usageRecordId) {
     document.getElementById('modal_client_name').textContent = clientName;
     document.getElementById('modal_usage_record_id').value = usageRecordId;
     document.getElementById('cantidad_impresiones').value = '';
+    const fechaImpresionInput = document.getElementById('fecha_impresion');
+    if (fechaImpresionInput) {
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        const currentDateTime = now.toISOString().slice(0, 16);
+        fechaImpresionInput.value = currentDateTime;
+        fechaImpresionInput.max = currentDateTime;
+    }
     new bootstrap.Modal(document.getElementById('impresionesModal')).show();
     setTimeout(() => document.getElementById('cantidad_impresiones').focus(), 500);
 }

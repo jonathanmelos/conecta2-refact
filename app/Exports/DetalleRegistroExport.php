@@ -62,7 +62,7 @@ class DetalleRegistroExport implements FromArray, WithHeadings
 
         $horasCoworkUsadas = $this->sumHoras($registros, 'cowork');
         $horasSalaUsadas = $this->sumHoras($registros, 'meeting_room');
-        $impresionesUsadas = $registros->sum('quantity');
+        $impresionesUsadas = $registros->where('service_type', 'print')->sum('quantity');
 
         $horasCoworkContratadas = $this->subscription->plan->cowork_hours ?? 0;
         $horasSalaContratadas = $this->subscription->plan->meeting_room_hours ?? 0;

@@ -6,12 +6,17 @@ use App\Models\Client;
 use App\Models\HoursTracking;
 use App\Models\Subscription;
 use App\Models\SubscriptionMember;
+use App\Models\UsageRecord;
 use Illuminate\Support\Collection;
 
 class UsagePlanResolver
 {
     public function resolve(Client $client, string $serviceType): array
     {
+        if ($serviceType === 'print') {
+            return $this->resolvePrint($client);
+        }
+
         $serviceColumn = $serviceType === 'meeting_room' ? 'can_use_meeting_room' : 'can_use_cowork';
         $defaultColumn = $serviceType === 'meeting_room' ? 'is_default_meeting_room' : 'is_default_cowork';
 
@@ -56,6 +61,64 @@ class UsagePlanResolver
             'is_billable' => true,
             'source' => 'billable',
             'service_type' => $serviceType,
+            'hours_used' => 0.0,
+            'hours_total' => 0.0,
+            'hours_available' => 0.0,
+            'is_pilot' => false,
+            'message' => null,
+            'options' => [],
+        ];
+    }
+
+    private function resolvePrint(Client $client): array
+    {
+        $assignments = SubscriptionMember::with('subscription.plan')
+            ->where('client_id', $client->id)
+            ->whereHas('subscription', function ($query) {
+                $this->activeSubscriptionQuery($query);
+            })
+            ->orderByDesc('is_default')
+            ->orderByDesc('is_default_cowork')
+            ->orderByDesc('is_default_meeting_room')
+            ->orderByDesc('updated_at')
+            ->get();
+
+        if (
+            $assignments->count() > 1
+            && !$assignments->contains('is_default', true)
+            && !$assignments->contains('is_default_cowork', true)
+            && !$assignments->contains('is_default_meeting_room', true)
+        ) {
+            return $this->ambiguous($assignments, 'print');
+        }
+
+        $assignment = $assignments->first();
+        if ($assignment && $assignment->subscription) {
+            return $this->resolved($assignment->subscription, false, 'member_assignment', 'print');
+        }
+
+        $client->loadMissing(['currentSubscription.plan', 'invitedBy.currentSubscription.plan', 'subscriptions.plan']);
+
+        if ($client->invitedBy) {
+            $subscription = $this->activeCurrentOrLatest($client->invitedBy);
+            if ($subscription) {
+                return $this->resolved($subscription, false, 'invited_by_current', 'print');
+            }
+        }
+
+        $subscription = $this->activeCurrentOrLatest($client);
+        if ($subscription) {
+            return $this->resolved($subscription, false, 'client_current', 'print');
+        }
+
+        return [
+            'status' => 'billable',
+            'subscription_id' => null,
+            'subscription' => null,
+            'plan' => null,
+            'is_billable' => true,
+            'source' => 'billable',
+            'service_type' => 'print',
             'hours_used' => 0.0,
             'hours_total' => 0.0,
             'hours_available' => 0.0,
@@ -140,15 +203,23 @@ class UsagePlanResolver
 
     private function resolved(Subscription $subscription, bool $isBillable, string $source, string $serviceType): array
     {
-        $tracking = HoursTracking::where('subscription_id', $subscription->id)
-            ->where('service_type', $serviceType)
-            ->first();
-
         $isPilot = (bool) ($subscription->plan && $subscription->plan->is_pilot);
-        $total = $serviceType === 'meeting_room'
-            ? (float) $subscription->effective_meeting_room_hours
-            : (float) $subscription->effective_cowork_hours;
-        $used = $tracking ? (float) $tracking->hours_used : 0.0;
+
+        if ($serviceType === 'print') {
+            $total = (float) $subscription->effective_prints_included;
+            $used = (float) UsageRecord::where('subscription_id', $subscription->id)
+                ->where('service_type', 'print')
+                ->sum('quantity');
+        } else {
+            $tracking = HoursTracking::where('subscription_id', $subscription->id)
+                ->where('service_type', $serviceType)
+                ->first();
+
+            $total = $serviceType === 'meeting_room'
+                ? (float) $subscription->effective_meeting_room_hours
+                : (float) $subscription->effective_cowork_hours;
+            $used = $tracking ? (float) $tracking->hours_used : 0.0;
+        }
 
         return [
             'status' => 'ok',

@@ -637,24 +637,59 @@ public function actualizarRegistro(Request $request)
         $request->validate([
             'client_id' => 'required|exists:clients,id',
             'cantidad' => 'required|integer|min:1',
+            'fecha_impresion' => 'nullable|date|after:2000-01-01|before_or_equal:now',
         ]);
         
-        $client = Client::findOrFail($request->client_id);
+        $client = Client::with([
+            'currentSubscription.plan',
+            'invitedBy.currentSubscription.plan',
+            'invitedBy.subscriptions.plan',
+            'subscriptions.plan',
+        ])->findOrFail($request->client_id);
+
+        $resolvedPlan = $this->usagePlanResolver->resolve($client, 'print');
+        if ($resolvedPlan['status'] === 'ambiguous') {
+            return redirect()->route('admin.registro.index')->with('error', $resolvedPlan['message']);
+        }
+
+        $subscriptionId = $resolvedPlan['subscription_id'];
+        $isBillable = $resolvedPlan['is_billable'];
+        $subscriptionToCheck = $resolvedPlan['subscription'];
+        $planToCheck = $resolvedPlan['plan'];
+
+        if ($planToCheck && $subscriptionToCheck && !$resolvedPlan['is_pilot'] && $subscriptionToCheck->effective_prints_included <= 0) {
+            return redirect()->route('admin.registro.index')
+                ->with('error', 'El plan ' . $planToCheck->name . ' no incluye impresiones.');
+        }
+
+        $fechaImpresion = $request->filled('fecha_impresion')
+            ? Carbon::parse($request->fecha_impresion)
+            : now();
         
         UsageRecord::create([
             'client_id' => $client->id,
-            'subscription_id' => $client->current_subscription_id,
+            'subscription_id' => $subscriptionId,
             'service_type' => 'print',
-            'check_in' => now(),
-            'check_out' => now(),
+            'check_in' => $fechaImpresion,
+            'check_out' => $fechaImpresion,
             'quantity' => $request->cantidad,
             'status' => 'completed',
             'registration_method' => 'manual',
-            'is_billable' => false,
+            'is_billable' => $isBillable,
         ]);
+
+        $message = 'Se registraron ' . $request->cantidad . ' impresiones para ' . $client->full_name;
+
+        if ($isBillable) {
+            $message .= ' (Cliente ocasional - se facturará por separado)';
+        } elseif ($resolvedPlan['source'] === 'member_assignment') {
+            $message .= ' (Plan asignado #' . $subscriptionId . ')';
+        } elseif ($resolvedPlan['source'] === 'invited_by_current') {
+            $message .= ' (Plan del cliente invitante #' . $subscriptionId . ')';
+        }
         
         return redirect()->route('admin.registro.index')
-            ->with('success', 'Se registraron ' . $request->cantidad . ' impresiones para ' . $client->full_name);
+            ->with('success', $message);
     }
     
     private function actualizarHoras(UsageRecord $registro)

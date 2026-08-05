@@ -26,6 +26,12 @@
                                min="1" required autofocus
                                placeholder="Ingrese la cantidad">
                     </div>
+
+                    <div class="mb-3">
+                        <label for="fecha_impresion" class="form-label">Fecha y hora:</label>
+                        <input type="datetime-local" class="form-control"
+                               id="fecha_impresion" name="fecha_impresion">
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
