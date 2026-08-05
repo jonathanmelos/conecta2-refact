@@ -8,6 +8,8 @@ use App\Http\Controllers\Admin\RegistroController;
 use App\Http\Controllers\Admin\ReporteController;
 use App\Http\Controllers\Admin\CalendarioController;
 use App\Http\Controllers\SelfServiceController;
+use App\Http\Controllers\Mcp\OAuthController;
+use App\Http\Controllers\Admin\McpController;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
 
@@ -25,6 +27,21 @@ Route::post('/autoservicio/reservar', [SelfServiceController::class, 'reserve'])
 
 // Rutas de autenticación (Breeze)
 require __DIR__.'/auth.php';
+
+// ============================================
+// MCP OAuth (servidor MCP de solo lectura)
+// ============================================
+Route::get('/.well-known/oauth-authorization-server', [OAuthController::class, 'authorizationServerMetadata']);
+Route::get('/.well-known/oauth-protected-resource', [OAuthController::class, 'protectedResourceMetadata']);
+Route::get('/.well-known/oauth-protected-resource/{any}', [OAuthController::class, 'protectedResourceMetadata'])->where('any', '.*');
+
+Route::prefix('oauth/mcp')->name('mcp.oauth.')->group(function () {
+    Route::post('/register', [OAuthController::class, 'register'])->name('register');
+    Route::get('/authorize', [OAuthController::class, 'showAuthorize'])->name('authorize');
+    Route::post('/authorize', [OAuthController::class, 'submitAuthorize'])->name('authorize.submit');
+    Route::post('/token', [OAuthController::class, 'token'])->name('token');
+    Route::post('/revoke', [OAuthController::class, 'revoke'])->name('revoke');
+});
 
 // Rutas protegidas por autenticación
 Route::middleware('auth')->group(function () {
@@ -121,6 +138,15 @@ Route::middleware('auth')->group(function () {
         Route::put('/calendario/{evento}', [CalendarioController::class, 'update'])->name('calendario.update');
         Route::delete('/calendario/{evento}', [CalendarioController::class, 'destroy'])->name('calendario.destroy');
         Route::get('/api/eventos', [CalendarioController::class, 'apiEvents'])->name('calendario.api');
+
+        // MCP Connector (panel de administración)
+        Route::prefix('mcp')->name('mcp.')->group(function () {
+            Route::get('/permisos', [McpController::class, 'permissions'])->name('permissions');
+            Route::post('/permisos', [McpController::class, 'updatePermissions'])->name('permissions.update');
+            Route::get('/conexiones', [McpController::class, 'connections'])->name('connections');
+            Route::post('/conexiones/{token}/revocar', [McpController::class, 'revokeConnection'])->name('connections.revoke');
+            Route::get('/auditoria', [McpController::class, 'auditLog'])->name('audit');
+        });
     });
 
     // ============================================

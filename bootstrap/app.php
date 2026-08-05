@@ -16,6 +16,19 @@ return Application::configure(basePath: dirname(__DIR__))
         'admin' => \App\Http\Middleware\AdminMiddleware::class,
         'regular' => \App\Http\Middleware\RegularMiddleware::class,
         'api_token' => \App\Http\Middleware\ApiTokenMiddleware::class,
+        'mcp.auth' => \App\Http\Middleware\McpAuth::class,
+    ]);
+
+    // These three are called directly by the MCP client (Claude.ai), not
+    // from a browser session with a Blade-rendered CSRF token — they're
+    // protected by their own logic instead (PKCE, token hash lookups).
+    // oauth/mcp/authorize (the consent screen POST) is intentionally left
+    // CSRF-protected: that one *does* originate from our own Blade form
+    // inside an authenticated session, so the normal protection applies.
+    $middleware->validateCsrfTokens(except: [
+        'oauth/mcp/register',
+        'oauth/mcp/token',
+        'oauth/mcp/revoke',
     ]);
 })
     ->withExceptions(function (Exceptions $exceptions): void {
